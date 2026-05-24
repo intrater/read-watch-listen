@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RWL Capture — Settings</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { max-width: 480px; margin: 40px auto; padding: 0 20px; font: 14px/1.5 -apple-system, system-ui, sans-serif; }
+      h1 { font-size: 18px; }
+      label { display: block; margin: 16px 0 4px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; color: inherit; background: transparent; border: 1px solid rgba(128, 128, 128, 0.5); border-radius: 6px; }
+      .hint { font-size: 12px; opacity: 0.6; margin-top: 4px; }
+      button { margin-top: 18px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+      .saved { margin-left: 10px; color: #1a9c4f; }
+    </style>
+  </head>
+  <body>
+    <h1>RWL Capture — Settings</h1>
+    <label for="endpoint">Capture endpoint</label>
+    <input id="endpoint" type="url" placeholder="https://rwl-api.vercel.app/api/capture" />
+    <label for="token">Capture token</label>
+    <input id="token" type="password" placeholder="paste CAPTURE_TOKEN_EXT" />
+    <div class="hint">Stored locally in this browser only (chrome.storage.local). Never committed.</div>
+    <div><button id="save">Save</button><span class="saved" id="saved" hidden>Saved ✓</span></div>
+    <script src="options.js"></script>
+  </body>
+</html>

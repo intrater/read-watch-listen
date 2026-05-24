@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { width: 320px; margin: 0; padding: 14px; font: 13px/1.4 -apple-system, system-ui, sans-serif; }
+      h1 { font-size: 11px; margin: 0 0 10px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+      .title { font-weight: 600; margin-bottom: 2px; word-break: break-word; }
+      .url { font-size: 11px; opacity: 0.55; margin-bottom: 10px; word-break: break-all; }
+      textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; padding: 8px; font: inherit; color: inherit; background: transparent; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 8px; }
+      button { width: 100%; margin-top: 10px; padding: 9px; font: inherit; font-weight: 600; color: #fff; background: #1f6fff; border: 0; border-radius: 8px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .status { min-height: 16px; margin-top: 10px; font-size: 12px; }
+      .status.ok { color: #1a9c4f; }
+      .status.err { color: #dd3322; }
+      .config { margin-top: 8px; font-size: 11px; }
+      a { color: #1f6fff; }
+    </style>
+  </head>
+  <body>
+    <h1>Save to RWL</h1>
+    <div class="title" id="title">…</div>
+    <div class="url" id="url"></div>
+    <textarea id="note" placeholder="why this caught my eye (optional)"></textarea>
+    <button id="save">Save</button>
+    <div class="status" id="status"></div>
+    <div class="config" id="config" hidden>Not configured — <a href="#" id="openOptions">open settings</a>.</div>
+    <script src="popup.js"></script>
+  </body>
+</html>
