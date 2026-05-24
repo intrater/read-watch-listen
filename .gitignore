@@ -30,3 +30,7 @@ Thumbs.db
 
 # Bootstrap inputs (never commit raw Twitter export)
 apps/bootstrap/input/
+
+# iOS Shortcut binaries — they bake CAPTURE_TOKEN_IOS into the plist.
+# The generator (ios/build_shortcut.py) is in-tree; the output is not.
+ios/*.shortcut
