@@ -1,7 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // The capture route + Shiori client use Web-standard Request/Response/fetch
+    // (Vercel's Web function signature). The DOM lib is their canonical type
+    // home; without it Vercel's function compiler sees a minimal Response that
+    // lacks .ok/.json()/.text()/.headers, even though local @types/node tsc
+    // passes. Keep both compilers in agreement.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["api", "src", "scripts", "test"]
 }
