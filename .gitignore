@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+*.log
+
+# Build outputs
+dist/
+build/
+.astro/
+.cache/
+.next/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# Cloudflare
+.wrangler/
+.mf/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bootstrap inputs (never commit raw Twitter export)
+apps/bootstrap/input/
