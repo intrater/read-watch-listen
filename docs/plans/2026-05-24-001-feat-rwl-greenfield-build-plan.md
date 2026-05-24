@@ -65,6 +65,7 @@ Carried from origin:
 - "Suggest a link to John" inbox
 - Comments / replies on the public website
 - Per-item engagement analytics dashboard
+- Automated Slack-engagement read-back (reaction/reply counts rolled into the ops DM) — deferred to post-launch per the 2026-05-24 review; v1 tracks engagement by eye
 - Cross-posting digests to LinkedIn, Twitter/X, or other social channels
 - Native mobile app beyond the iOS Shortcut
 - Paid / premium tiers or monetization
@@ -104,8 +105,12 @@ No `docs/solutions/` exists in this repo. None to carry forward.
 
 ### External References
 
-- **Shiori** ([shiori.sh](https://www.shiori.sh)) — SaaS bookmark store. Free / $3 / $10 tiers. Pro ($10/mo) includes X bookmark sync, Notion sync, email forwarding, AI chat, PDF uploads, YouTube transcripts. Has REST API, CLI, MCP integration, browser extensions, "natural language search." Auto-fetches metadata.
-- **iOS Shortcut pattern** for share-sheet POST with note prompt: `Get Contents of URL` action with manually-authored JSON Text body (workaround for the multi-value field bug). References: [Linkding gist](https://gist.github.com/andrewdolphin/a7dff49505e588d940bec55132fab8ad), [Shiori issue #284](https://github.com/go-shiori/shiori/issues/284).
+- **Shiori** ([shiori.sh](https://www.shiori.sh)) — Brian Lovin's **hosted SaaS** bookmark store (a PWA + Chrome/Arc/Brave extension + iOS Shortcut). Free / $3 / $10 tiers. Pro ($10/mo) includes X bookmark sync, Notion sync, email forwarding, AI chat, PDF uploads, YouTube transcripts. **Not to be confused with `go-shiori/shiori`, an unrelated self-hosted Go bookmark manager.** API verified 2026-05-24 ([shiori.sh/docs/api](https://www.shiori.sh/docs/api), [/docs/mcp](https://www.shiori.sh/docs/mcp)), Bearer `shk_…` auth:
+  - `POST /api/links` — create (`url`, `title`, `created_at` override → supports bootstrap's synthetic dates)
+  - `PATCH /api/links/:id` — update title/summary/saved-date; `set_link_tags` for tags
+  - `GET /api/links?since=<ISO8601>` — "only return links created at or after this time" (digest poll); also `limit`/`offset`, `search`, `tag` filters
+  - Note: schema exposes `title` + `summary` + tags, but **no dedicated free-text user-note field** — RWL's "why" note lives in D1 (see store-model decision below).
+- **iOS Shortcut pattern** for share-sheet POST with note prompt: `Get Contents of URL` action with manually-authored JSON Text body (workaround for the multi-value field bug). References: [Linkding gist](https://gist.github.com/andrewdolphin/a7dff49505e588d940bec55132fab8ad), and Brian Lovin's own Shiori iOS Shortcut guide (linked from his X announcement / shiori.sh). *(The earlier `go-shiori/shiori#284` citation was the wrong project — corrected.)* RWL's capture client POSTs to the Worker's `/capture`, not to Shiori directly, so the Shortcut targets the Worker.
 - **LLM voice priming (2026)**: system-prompt voice card + 3 anchor samples > fine-tuning. Frontier models (Claude Opus 4.7, GPT-5) follow voice cards well enough that fine-tuning's marginal lift is not worth the lock-in.
 - **Twitter/X bookmark export**: official archive ZIP still doesn't include bookmarks (2026); official API capped at 800. Use [`prinsss/twitter-web-exporter`](https://github.com/prinsss/twitter-web-exporter) Tampermonkey userscript for one-time bootstrap.
 - **Slack approval pattern**: Block Kit `actions` block, `chat.update` (not `response_url`) for state changes, durable timer in storage (not in-memory). Idempotency on `(message_ts, action_id, user_id)`. ACK Slack within 3s.
@@ -120,11 +125,13 @@ No `docs/solutions/` exists in this repo. None to carry forward.
 - **Single Cloudflare Worker control plane.** One deploy surface, one log stream, one secret store. Hosts the capture API, Slack interactivity webhook, daily/weekly cron triggers, durable approval timer, and the deploy-hook trigger. Cost: free tier. State: Cloudflare KV (small JSON blobs — pending drafts, dedupe keys) + D1 (relational — digest history, items shipped, email mapping for permalinks).
 - **Astro on Cloudflare Pages.** Content Layer loader fetches from Shiori at build time; Pagefind for client-side search; Preact island for tag-chip filtering and email signup; `@astrojs/rss` for RSS. Deploy hook from the Worker rebuilds on publish.
 - **Buttondown for email.** Markdown-native API, the right aesthetic for a curated AI publication, free at this scale.
-- **Shiori SaaS as canonical store**, not self-hosted. Pro tier ($10/mo) likely worth it for X bookmark sync (helpful for ongoing capture flow consistency with the bootstrap) and email-forwarding-as-capture as a backup ingestion path. Confirm at U2.
-- **Two-phase publish.** A digest is *persisted* canonically in D1 first, then *fanned out* via independent retry-able tasks to (Slack channel, Buttondown, deploy hook). Each surface has its own status row. Slack DM approval marks the digest as `approved` in D1; fan-out workers pick up `approved` digests and update per-surface status. This makes partial fan-out failure recoverable and makes idempotency the natural default. Resolves origin flow analyst blockers B1, B3, B13.
-- **Capture durability via server-side queue.** Client (Shortcut / extension) POSTs to the Worker. Worker writes the raw capture event into D1 immediately (the truth), then asynchronously writes to Shiori with retry. If Shiori is down, the capture is not lost. The LLM "why" pre-fill is best-effort: if it fails, the share sheet shows empty input or the user's typed note and the item is saved anyway. Resolves B6, B7, B8.
-- **Weekend Reads is a recap, not net-new.** It republishes the week's items grouped thematically with LLM-drafted connector prose. This matches the "Weekend Reads" branding (something to read Saturday morning) and resolves the public email cadence question downstream. Resolves B11, I15, I16.
-- **Public email gets Weekend Reads only by default; daily emails opt-in.** Reduces inbox burden for casual external readers; power users can toggle. Faire Slack channel still gets dailies. Resolves the brainstorm's "public email cadence" deferred question and the flow analyst's I-band concerns about email volume.
+- **Buttondown is the single source of truth for subscribers (resolved 2026-05-24).** There is no D1 `subscribers` table. The subscribe form → Worker → Buttondown `POST /v1/subscribers`, tagging `daily` when the reader opts into daily emails. Fan-out targets audiences via Buttondown's tag filter; unsubscribes are Buttondown-native, so no list can drift. RWL therefore stores **no subscriber PII** of its own — Buttondown owns that data under its compliance — which also retires the D1-retention concern from the review.
+- **Shiori SaaS as canonical *bookmark* store**, not self-hosted. Pro tier ($10/mo) likely worth it for X bookmark sync (helpful for ongoing capture flow consistency with the bootstrap) and email-forwarding-as-capture as a backup ingestion path. *Verified 2026-05-24 — `shiori.sh` is real, the REST API supports the full pipeline (see External References).*
+- **Store model: split ownership, merge at build (resolved 2026-05-24).** Shiori owns **bookmark facts** (url, title, archived page, thumbnail, `created_at`). D1 owns **RWL editorial fields** — the "why" note, R/W/L classification, topic tags — plus all publication state (digests, fan-out, subscribers) and a capture durability log. The public site (U9) and the daily digest (U5) read **D1 as the spine** (which items, with their why/R-W-L/tags) and **join Shiori bookmark facts on `shiori_id` at build/compose time**. This keeps the "why" note — RWL's core asset — a first-class field immune to Shiori's auto-generated `summary`, and resolves the review's "enrichment never reaches the site" finding outright (the site reads the note from D1, so nothing needs to be written back to Shiori). It reinterprets R17 as "Shiori is the canonical *bookmark* store; RWL owns its editorial overlay," rather than a single literal source of truth.
+- **Two-phase publish.** A digest is *persisted* canonically in D1 first, then *fanned out* via independent retry-able tasks to (Slack channel, Buttondown, deploy hook). Each surface has its own status row. Slack DM approval marks the digest as `approved` in D1; fan-out workers pick up `approved` digests and update per-surface status. This makes partial fan-out failure recoverable and makes idempotency the natural default.
+- **Capture durability via server-side queue.** Client (Shortcut / extension) POSTs to the Worker. Worker writes the raw capture event into D1 immediately (the truth), then asynchronously writes to Shiori with retry. If Shiori is down, the capture is not lost. The LLM "why" pre-fill is best-effort: if it fails, the share sheet shows empty input or the user's typed note and the item is saved anyway.
+- **Weekend Reads is a recap, not net-new.** It republishes the week's items grouped thematically with LLM-drafted connector prose. This matches the "Weekend Reads" branding (something to read Saturday morning) and resolves the public email cadence question downstream.
+- **Public email gets Weekend Reads only by default; daily emails opt-in.** Reduces inbox burden for casual external readers; power users can toggle. Faire Slack channel still gets dailies. Resolves the brainstorm's "public email cadence" deferred question.
 - **iOS Shortcut + Chrome extension for capture, not native Swift v1.** Fastest to ship (no App Store), zero ongoing maintenance. Re-evaluate once Shortcut friction is real.
 - **No client-side "why" pre-fill in v1.** The iOS "Ask for Input" action is plain text and synchronous; we can't show the LLM draft inline before POST. Pattern: user types a short note (or leaves blank) → POST to Worker → Worker writes capture event → LLM-drafted "why" generated server-side and applied if no user note was supplied. If the user wants to edit the AI draft later, they do it in Shiori's web UI before the next digest fires. This trades the brainstorm's "5 second edit" UX for shipping in days instead of weeks; the brainstorm's spirit (LLM helps write the note when the user didn't) is preserved.
 - **Cloudflare D1 for relational state, KV for ephemeral state.** D1 schema covers: `captures`, `digests`, `digest_items`, `fan_out_status`, `subscribers`. KV holds: `pending_draft:{digest_id}` (with TTL covering the auto-ship window), idempotency markers.
@@ -177,8 +184,7 @@ read-watch-listen/
 │   │   │   ├── index.ts         # entry: routes + scheduled handler
 │   │   │   ├── routes/
 │   │   │   │   ├── capture.ts   # POST /capture
-│   │   │   │   ├── slack.ts     # POST /slack/interactivity
-│   │   │   │   └── deploy.ts    # internal: trigger CF Pages deploy
+│   │   │   │   └── slack.ts     # POST /slack/interactivity
 │   │   │   ├── jobs/
 │   │   │   │   ├── daily-digest.ts
 │   │   │   │   ├── weekend-reads.ts
@@ -199,10 +205,17 @@ read-watch-listen/
 │   │   │   │   └── cluster.md
 │   │   │   └── types.ts
 │   │   └── test/
+│   │       ├── db.test.ts
 │   │       ├── capture.test.ts
+│   │       ├── url.test.ts
+│   │       ├── llm.test.ts
+│   │       ├── classify.test.ts
 │   │       ├── daily-digest.test.ts
 │   │       ├── slack.test.ts
-│   │       └── fan-out.test.ts
+│   │       ├── auto-ship.test.ts
+│   │       ├── fan-out.test.ts
+│   │       ├── weekend-reads.test.ts
+│   │       └── ops.test.ts
 │   ├── site/                    # Astro public site
 │   │   ├── astro.config.mjs
 │   │   ├── src/
@@ -227,13 +240,25 @@ read-watch-listen/
 │   │   │   │   └── SearchBox.tsx    # Pagefind UI
 │   │   │   └── layouts/
 │   │   │       └── Base.astro
-│   │   └── public/
+│   │   ├── public/
+│   │   └── test/
+│   │       ├── content-loader.test.ts
+│   │       ├── tag-filter.test.ts
+│   │       └── archive.test.ts
+│   ├── chrome-extension/        # Desktop capture client
+│   │   ├── manifest.json
+│   │   ├── popup.html
+│   │   ├── popup.js
+│   │   └── icon.png
 │   └── bootstrap/               # Twitter archive import script
 │       ├── package.json
-│       └── src/
-│           ├── index.ts          # CLI entry
-│           ├── filter.ts         # LLM AI-relevance filter
-│           └── ingest.ts         # bulk POST to Shiori
+│       ├── src/
+│       │   ├── index.ts          # CLI entry
+│       │   ├── filter.ts         # LLM AI-relevance filter
+│       │   └── ingest.ts         # bulk POST to Shiori
+│       └── test/
+│           ├── filter.test.ts
+│           └── ingest.test.ts
 ├── docs/
 │   ├── brainstorms/2026-05-24-rwl-requirements.md
 │   ├── plans/2026-05-24-001-feat-rwl-greenfield-build-plan.md
@@ -319,7 +344,8 @@ fan_out_status(digest_id, surface ['slack_ch' | 'email' | 'site'],
                status ['queued' | 'success' | 'failed'], attempts, last_error,
                updated_at)
 
-subscribers(email, subscribed_at, daily_opt_in, unsubscribed_at)
+-- No subscribers table: Buttondown is the sole source of truth for the
+-- subscriber list and the `daily` opt-in tag (resolved 2026-05-24).
 ```
 
 This sketch communicates direction. Actual columns, indexes, and types are an implementation concern.
@@ -347,11 +373,11 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Test: `apps/worker/test/db.test.ts`
 
 **Approach:**
-- pnpm monorepo with workspaces for `apps/worker`, `apps/site`, `apps/bootstrap`.
+- pnpm monorepo with workspaces for `apps/worker`, `apps/site`, `apps/bootstrap`, `apps/chrome-extension`.
 - Wrangler v3+ with Vitest for tests; TypeScript everywhere.
 - Define D1 schema covering `captures`, `digests`, `digest_items`, `fan_out_status`, `subscribers`. Don't bind to a specific column list yet; the schema lands in a migration committed to the repo.
 - KV namespace `RWL_STATE` for pending drafts, idempotency, and any small ephemeral state.
-- Secrets via `wrangler secret put`: `SHIORI_TOKEN`, `LLM_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `BUTTONDOWN_TOKEN`, `CF_PAGES_DEPLOY_HOOK`.
+- Secrets via `wrangler secret put`: `SHIORI_TOKEN`, `LLM_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `BUTTONDOWN_TOKEN`, `CF_PAGES_DEPLOY_HOOK`, `CAPTURE_TOKEN_IOS`, `CAPTURE_TOKEN_EXT`, `JOHN_SLACK_USER_ID`. (See Review-Driven Refinements for the per-client capture tokens and the Slack-actor assertion.)
 - CI runs lint, typecheck, unit tests on every push.
 
 **Patterns to follow:** No internal patterns; this is the foundation everyone else will follow. Lean on Cloudflare Workers official docs.
@@ -388,7 +414,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - `POST /capture` accepts `{ url, note?, source }` with a bearer token (a long random secret known to the iOS Shortcut and Chrome extension).
 - URL normalization strips `utm_*`, `fbclid`, `t.co` wrappers (resolve once if cheap), trailing slashes, and lower-cases the host.
 - Dedupe key is the normalized URL. If a capture for the same normalized URL exists, treat the second capture as an update (overwrite the note if a new one is provided) and respond 200 with `{ status: 'updated' }`.
-- Write the capture row to D1 first, then call Shiori's create-bookmark API. If Shiori fails, the row is marked `shiori_status='pending'` and a background retry (next cron tick or a queue) reconciles.
+- Write the capture row to D1 first (D1 holds the "why" note, R/W/L, topic tags — the editorial fields RWL owns per the store model), then create the bookmark in Shiori via `POST /api/links` (`url`, `title`; `created_at` for bootstrap). Only bookmark facts go to Shiori; editorial fields are NOT written back to it. Store the returned Shiori id as `shiori_id` on the capture row (the join key). If Shiori fails, the row is marked `shiori_status='pending'` and a background retry (next cron tick or a queue) reconciles.
 
 **Patterns to follow:** Shiori API docs at shiori.sh; standard Workers HTTP routing.
 
@@ -453,8 +479,8 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
   2. Calls the LLM with the `why-assist` prompt to draft a one-line note in John's voice, only if the user did not supply a note.
   3. Calls the LLM (or a separate cheap classifier) with the `classify` prompt to assign one of {Read, Watch, Listen} based on URL pattern + content type.
   4. Calls the LLM to suggest one or two topic tags from the locked taxonomy.
-  5. Writes the result back to the capture row in D1.
-- The LLM job is best-effort. If it fails, the row keeps `note=null`, `rwl_tag='read'` (default), `topic_tags=[]`; the next digest can fill them in or John can override in Shiori.
+  5. Writes the result to the capture row in D1. Per the store model, enrichment stays in D1 (it is not pushed to Shiori); the site and digest read it from D1, so it reaches every surface without a Shiori write-back.
+- The LLM job is best-effort. If it fails, the row keeps `note=null`, `rwl_tag='read'` (default), `topic_tags=[]`; the next digest can fill them in or John can override in the RWL editing path (D1), not in Shiori.
 - The R/W/L classifier should be pattern-first (YouTube → Watch, Spotify/Apple podcasts → Listen, everything else → Read), with the LLM only resolving ambiguous cases.
 
 **Patterns to follow:** Anthropic SDK conventions; prompt-engineering best practices from research (voice card + samples).
@@ -478,7 +504,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 - U5. **Daily digest composition (cron + voice card + clustering)**
 
-**Goal:** A scheduled Worker job that pulls new items from Shiori since the last digest, composes a daily digest using the voice card + anchor samples, and persists it as a draft in D1.
+**Goal:** A scheduled Worker job that pulls new items from D1 (the editorial spine) since the last digest, joins Shiori bookmark facts, composes a daily digest using the voice card + anchor samples, and persists it as a draft in D1.
 
 **Requirements:** R6, R7, R8, R18, R21.
 
@@ -491,13 +517,13 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Create: `apps/worker/src/prompts/digest-compose.md`
 - Create: `apps/worker/src/prompts/cluster.md`
 - Create: `docs/voice/voice-card.md`, `docs/voice/samples/sample-1.md`, `docs/voice/samples/sample-2.md`, `docs/voice/samples/sample-3.md`
-- Modify: `apps/worker/src/index.ts` (register scheduled handler for cron `0 14 * * *` = 7am PT)
+- Modify: `apps/worker/src/index.ts` (register scheduled handler for cron `0 14 * * 0-5` = 7am PT Sun–Fri; skips Saturday so it never double-sends with the Saturday Weekend Reads recap — see U8)
 - Modify: `apps/worker/wrangler.toml` (cron trigger)
 - Test: `apps/worker/test/daily-digest.test.ts`
 
 **Approach:**
-- Cron fires daily at 7am PT (14:00 UTC; daylight saving will need a manual swap or a fixed UTC choice).
-- Pull captures from D1 (or Shiori) since the last `digest_id` with `kind='daily'`, status in `('approved','shipped')`. Skip captures flagged `bootstrap=true`.
+- Cron fires at 7am PT Sun–Fri (`0 14 * * 0-5`); Saturday is intentionally skipped so the daily digest never double-sends the same captures that the Saturday Weekend Reads recap re-publishes (see U8). 14:00 UTC; daylight saving will need a manual swap or a fixed UTC choice.
+- Pull captures from **D1** (the authoritative spine for editorial fields) since the last `digest_id` with `kind='daily'`. Skip captures flagged `bootstrap=true`. Exclude captures with `shiori_status != 'synced'` so every included item has joinable Shiori bookmark facts and a live permalink (prevents the shipped-link-404 case); deferred items roll into the next digest. Bookmark facts (title, thumbnail) come from Shiori via `GET /api/links` joined on `shiori_id`.
 - If zero new items, mark the day as "skipped" in D1 (so we have a record) and exit. No fan-out.
 - Otherwise, build the prompt: voice card + 3 anchor samples + items (URL, title, R/W/L tag, topic tags, "why" note). Request a markdown body with a natural opener, items grouped by R/W/L, the user's "why" verbatim, and the signature line.
 - Use a cheaper, separate "cluster" LLM call first if there are ≥3 items, to suggest a connector sentence theme. Keep that out of the voice-prompted call.
@@ -586,19 +612,19 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 **Approach:**
 - Fan-out is a single function called from U6's `ship` action and from the auto-ship cron. It writes three `fan_out_status` rows (`surface ∈ {slack_ch, email, site}`, `status='queued'`) and then attempts each in parallel using `Promise.allSettled`. Each branch updates its own status row on success/failure.
 - **Slack channel post**: render the markdown body to Slack `mrkdwn` blocks, post to `#rwl`, append the signature line. Channel ID lives in env config.
-- **Buttondown**: only fire for Weekend Reads by default. For daily digests, send only to subscribers with `daily_opt_in=true`. Buttondown `POST /v1/emails` with `subject`, markdown `body`, and an audience filter or tag.
+- **Buttondown**: only fire for Weekend Reads by default. For daily digests, send a tag-filtered broadcast scoped to subscribers tagged `daily`. Buttondown `POST /v1/emails` with `subject`, markdown `body`, and the audience tag filter (Buttondown is the source of truth for who is subscribed — no D1 list to consult). If no subscriber carries the `daily` tag, skip the email surface (mark `skipped`, not `failed`).
 - **CF Pages deploy hook**: simple `POST` to the configured deploy hook URL with `{ ref: 'main' }`. Don't block on completion.
 - Failed surfaces are retried by a background sweep (the same per-minute cron used for auto-ship). After 3 attempts, the surface stays `failed`, an error notification goes to John's ops DM, and the digest's master `status` is set to `shipped_partial`.
 - The Slack channel post and email subject pull from `digests.body_md` exactly as it was at the moment of approval — no further LLM calls.
 
-**Patterns to follow:** Two-phase publish pattern (persist canonical → fan-out independently with per-surface state). Resolves origin flow analyst B1, B3, B13.
+**Patterns to follow:** Two-phase publish pattern (persist canonical → fan-out independently with per-surface state).
 
 **Test scenarios:**
 - Happy path: digest approved → three `fan_out_status` rows created → all three succeed → digest status `shipped`.
 - Edge case: Slack channel post succeeds, Buttondown fails. Slack post not rolled back. Background sweep retries Buttondown twice; on third failure, status `shipped_partial`, ops DM fires.
 - Edge case: deploy hook 502s → background sweep retries; eventually succeeds; site catches up.
 - Edge case: digest fan-out called twice (race between ship click and auto-ship) → second call sees existing `fan_out_status` rows and no-ops.
-- Edge case: daily digest with no `daily_opt_in` subscribers → Buttondown call is skipped (not failed); status row marked `skipped`.
+- Edge case: daily digest with no subscribers tagged `daily` → Buttondown call is skipped (not failed); status row marked `skipped`.
 - Integration: the signature line "Curated by John Intrater · Assembled by Claude" appears in all three surfaces' output (asserted in the Slack post payload, the Buttondown body, and the static-site digest page).
 - Error path: deploy hook URL misconfigured → fan-out doesn't block Slack/email; site is the only surface that fails; ops DM fires.
 
@@ -627,8 +653,9 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Run a clustering LLM call: input is the items + their notes, output is JSON `{ clusters: [{ label, item_ids[] }] }`. Cheap model, no voice.
 - Run a voice-primed LLM call per cluster: input is the cluster's items + their notes, output is a 1–2 paragraph connector. Concatenate to form `body_md` along with a top-of-post "this week's lead" callout (the LLM picks one item from the clusters).
 - Persist as `digests` row with `kind='weekend'`, `status='draft'`.
-- DM John for approval (reusing U6's machinery, distinct visual treatment — different DM header, etc.).
-- On approval, fan out to all three surfaces (reusing U7's machinery), with email going to *all* subscribers (not just `daily_opt_in`).
+- DM John for approval (reusing U6's machinery) with a distinct header — "📚 Weekend Reads draft — {date}" — so he can tell at a glance which kind he's approving; same Ship/Edit/Skip controls.
+- **Slack channel treatment (resolved 2026-05-24): threaded, per R12.** Post a short parent message — "📚 *Weekend Reads — {date}* · this week's lead: {lead item}" — then post each cluster's connector paragraph + item bullets as **threaded replies** under it. This is visibly distinct from the daily digest's single compact post, matches R12's literal "threaded on Slack," and keeps `#rwl` uncluttered. The signature line lands on the parent.
+- On approval, fan out to all three surfaces (reusing U7's machinery), with email going to *all* subscribers (Weekend Reads is the default audience — no `daily` tag filter), and the static site rendering the long-form Weekend Reads page.
 
 **Patterns to follow:** Same digest pipeline as U5/U6/U7. Separate clustering LLM call from voice-primed composer (per research).
 
@@ -664,7 +691,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Test: `apps/site/test/content-loader.test.ts`
 
 **Approach:**
-- `apps/site/src/content/config.ts` defines a `curatedItems` collection using Astro's Content Layer with a custom `loader` that calls Shiori's REST API at build time. Schema validation ensures every item has `{ url, title, note?, rwlTag, topicTags[], capturedAt, slug }`. Items with invalid tags cause a build warning but don't fail the build.
+- `apps/site/src/content/config.ts` defines a `curatedItems` collection using Astro's Content Layer with a custom `loader` that, at build time, fetches the **RWL item spine from the Worker/D1** (the editorial fields: `note`, `rwlTag`, `topicTags[]`, `slug`, `shiori_id`) and **joins Shiori bookmark facts** (`title`, thumbnail, archive) via `GET /api/links` on `shiori_id`. Schema validation ensures every item has `{ url, title, note?, rwlTag, topicTags[], capturedAt, slug }`. If a Shiori record is missing/unreachable at build, fall back to the D1-cached title rather than dropping the item; items with invalid tags cause a build warning but don't fail the build.
 - `lib/taxonomy.ts` exports the locked taxonomy: `['Agents','Models','Tools','Research','Builders','Design','Workflow','Industry']`. Used by the Content Layer schema, by the tag-chip island in U10, and by the Worker's classifier in U4.
 - Base layout includes the curated.supply-style chrome: wordmark, top nav (Discover / Browse / Weekend Reads / About).
 
@@ -687,7 +714,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 **Requirements:** R13, R14, R22, R27, AE6.
 
-**Dependencies:** U9.
+**Dependencies:** U9, U7.
 
 **Files:**
 - Create: `apps/site/src/pages/index.astro`
@@ -699,8 +726,8 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 **Approach:**
 - Homepage renders a card per item, sorted newest-first. Each card has the curated.supply visual treatment: thumbnail (if available), brand/source, title, "why" note, R/W/L indicator icon, topic tags.
 - Tag chips are a Preact island. Tapping a chip filters the grid via DOM class toggling (zero JS heavy work — the grid is already rendered, the island just hides/shows cards). Active chip state is reflected in `?tag=` URL param for shareability.
-- Email subscribe form: a simple `<form>` posting to `/api/subscribe` on the Worker (added inline to U7's Buttondown integration). POST succeeds → show "thanks, check your email." Failure → inline error.
-- Subscribe form has a "daily updates too" checkbox; default is off (Weekend Reads only).
+- Email subscribe form: a simple `<form>` posting to `/api/subscribe` on the Worker, which calls Buttondown `POST /v1/subscribers` (Buttondown is the source of truth — no D1 write). POST succeeds → show "thanks, check your email." Buttondown reports an existing subscriber → show "you're already subscribed." Failure → inline error.
+- Subscribe form has a "daily updates too" checkbox; default is off (Weekend Reads only). When checked, the Worker adds the `daily` tag to the Buttondown subscriber; unchecked leaves them on the default Weekend-Reads-only audience.
 - Above-the-fold composition is enforced via layout — content begins immediately below the chip row.
 
 **Patterns to follow:** curated.supply's hero composition; Astro islands for minimal hydration.
@@ -953,3 +980,73 @@ Bootstrap from John's Twitter bookmark archive. Ops observability and dry-run mo
 - **Cloudflare Workers Cron Triggers:** https://developers.cloudflare.com/workers/configuration/cron-triggers/
 - **Twitter web exporter:** https://github.com/prinsss/twitter-web-exporter
 - **Buttondown:** https://buttondown.com
+
+---
+
+## Review-Driven Refinements (2026-05-24)
+
+Applied during a compound-engineering multi-persona review (coherence, feasibility, scope, security, design, product, adversarial). These amend the corresponding Implementation Units; the cron schedule (U5), secrets list (U1), pnpm workspaces (U1), and output tree (chrome-extension app) were corrected inline above.
+
+### U2 — Capture API
+- **Input validation (security):** Reject `note` > 500 chars, `url` > 2048 chars, or a non-`application/json` content-type with a 400 before writing to D1. No silent truncation.
+- **SSRF guard (security):** Add `validateFetchTarget(url)` in `lib/url.ts` — reject non-http(s) schemes, RFC-1918 / loopback / link-local addresses, and cap redirect follows at 3, re-validating each hop. Apply before *any* Worker-initiated fetch of a user-supplied URL (here and in U4's `og:` fetch).
+- **Per-client tokens (security):** Use two bearer tokens — `CAPTURE_TOKEN_IOS` and `CAPTURE_TOKEN_EXT` — not one shared secret, so either client can be revoked independently. Rotation procedure lives in the U14 runbook.
+
+### U3 — Capture clients
+- **Chrome popup states (design):** On `created` → "Saved to RWL" ✓ for 1.5s then close; on `updated` → "Note updated in RWL"; on 401 → "Auth error — check extension settings"; on network/5xx → "Save failed — try again" with Save re-enabled. Note field clears on success, retains on error.
+
+### U4 — LLM assist
+- **Prompt-injection containment (security):** When interpolating the user `note` into the why-assist and digest-compose prompts, wrap it in a delimited block (`<user_note>…</user_note>`) so a crafted note can't escape into system instructions.
+
+### U5 — Daily digest
+- **Cron (adversarial):** Now `0 14 * * 0-5` (Sun–Fri) — see inline note. Prevents the Saturday double-send with U8.
+
+### U6 — Slack approval
+- **Edit modal trigger (feasibility):** Call `views.open` **synchronously** with the interaction's `trigger_id` (using the KV-cached draft so no slow lookup is needed) *before* returning the 200 ACK. The `trigger_id` expires in ~3s, so the Edit branch cannot run inside `event.waitUntil`. Ship/Skip stay in `waitUntil`.
+- **Atomic approval (adversarial):** Approve via compare-and-swap — `UPDATE digests SET status='approved' WHERE id=? AND status='pending'` — and fire fan-out only when exactly one row changed. The click handler and the per-minute auto-ship cron share this CAS, so the ship-click-vs-timer race resolves to a single fan-out.
+- **Idempotency + actor assertion (security):** Key idempotency on `(message_ts, action_id, user_id)`. After Slack signature verification, assert the action payload's `user.id == JOHN_SLACK_USER_ID`; otherwise return 200, log a security event, and no-op.
+- **Terminal Block Kit states (design):** Three shapes, all removing the Ship/Edit/Skip buttons — **Shipped** ("Shipped HH:MM · N items · link"), **Auto-shipped** ("Auto-shipped HH:MM (30-min window elapsed)"), **Skipped** ("Skipped · N items held for next digest").
+- **Edit modal spec (design):** Title "Edit digest"; single `plain_text_input` (markdown) pre-filled with `body_md`, max 3000 chars. On `view_submission`: validate non-empty → update D1 → mark approved → fan out. On `view_closed` (cancel): no state change, the 30-min timer continues. `chat.update` the DM to "Editing…" while the modal is open.
+
+### U7 — Multi-surface fan-out
+- **Build verification (adversarial):** Set the `site` fan-out status to success only when a build that *includes the new digest* completes — via a Cloudflare Pages deployment webhook or a post-build ping back to the Worker — not on deploy-hook acceptance. On build failure (e.g., Shiori 500 at build time) mark `site=failed`, retry, and fire the ops DM. Prevents shipped permalinks 404-ing while `site` reads success.
+- **Unique constraint (adversarial):** Add `UNIQUE(digest_id, surface)` to `fan_out_status` so a duplicate fan-out INSERT fails atomically rather than relying on a non-atomic read-then-write check.
+
+### U8 — Weekend Reads
+- **Day resolution (scope):** Saturday is chosen over Friday per the Weekend-Reads consumption branding; Friday (R11's permitted alternative) is not used. The daily cron now skips Saturday (U5) so the two jobs never double-send the same captures.
+
+### U10 — Homepage / subscribe
+- **Rate limiting (security):** Apply Cloudflare Workers Rate Limiting to `/api/subscribe` (e.g., 3 attempts per IP per hour) so subscriber-flooding past Buttondown's free-tier cap is throttled at the edge. Duplicate detection is Buttondown-native (it reports an existing subscriber) — there is no D1 `subscribers` table to constrain (see store-model / subscriber decision).
+- **Subscribe-form states (design):** idle / submitting (button disabled, "Subscribing…") / success (form replaced with confirmation) / duplicate (field retained, "You're already subscribed") / invalid (inline "Enter a valid email", no Worker call) / server-error (field retained, "Something went wrong — try again").
+- **Opt-in checkbox (design):** Label "Also send me daily digests (Mon–Fri)", below the email field, default unchecked. Form POSTs `{ email, daily_opt_in }`; the Worker sets the Buttondown `daily` tag on the subscriber when true (no D1 write — Buttondown owns subscription state), so audience segmentation is a native tag filter.
+- **Tag chips (design):** Single-select with an implicit "All" — prepend an "All" chip, active by default; selecting a taxonomy chip deactivates the prior one; `?tag=` is absent when "All" is active.
+- **Empty homepage state (design):** When the items collection is empty, render "Items coming soon — subscribe to be the first to know." below the chip row and hide the tag chips (don't show zero-count chips).
+
+### U13 — Bootstrap
+- **Simplify CLI (scope):** Use a plain Node `readline` raw-mode keypress loop (`a`/`s`/`e`/`q`) instead of `ink`/`prompts`. Avoids a React-based TUI dependency (and its peer-dep conflict risk with the Preact/Astro workspace) in a one-time script.
+
+### U14 — Ops / runbook
+- **Subscriber PII policy (security):** RWL stores **no subscriber emails in D1** — Buttondown is the system of record and owns retention/compliance/unsubscribe (see subscriber decision). The only email that transits RWL is the subscribe-request body in the Worker; never persist or log it, and redact it from ops-DM/log payloads. Document as the data-handling policy in `docs/runbook.md`.
+- **Secret redaction (security):** Add `sanitizeContext()` that strips the deploy-hook URL (and UUID-like long strings) from ops-DM payloads. Runbook notes to regenerate the hook if it is ever observed in a log.
+- **Capture-token rotation (security):** Runbook procedure to rotate `CAPTURE_TOKEN_IOS` / `CAPTURE_TOKEN_EXT` — generate new value → `wrangler secret put` → rebuild the Shortcut spec / reload the extension.
+
+---
+
+## Deferred / Open Questions
+
+### From 2026-05-24 review
+
+The first three (the "which store is the source of truth?" root) were **resolved 2026-05-24**; the remaining three need John's product/design decision.
+
+**Resolved 2026-05-24:**
+
+- ✅ **[was P0 · U2] What Shiori actually is — VERIFIED.** `shiori.sh` is Brian Lovin's hosted SaaS (distinct from the unrelated `go-shiori/shiori` self-hosted project the citation wrongly pointed at). Its REST API supports the whole pipeline — `POST /api/links` (create, with `created_at` override), `PATCH /api/links/:id`, `GET /api/links?since=<ISO8601>` (the exact "list since" the poll needs), tag ops, Bearer `shk_…` auth. Capability claims and the iOS-Shortcut reference are corrected in External References. *(feasibility)*
+- ✅ **[was P1 · U4/U9 + U5/U9] Store authority — RESOLVED via split-ownership/merge-at-build (Option B).** D1 owns RWL editorial fields (why note, R/W/L, topic tags); Shiori owns bookmark facts; site (U9) and digest (U5) read D1 as the spine and join Shiori on `shiori_id`, excluding `shiori_status != 'synced'` items. This dissolves both the "enrichment never reaches the site" and "shipped permalink 404" findings. See the store-model decision in Key Technical Decisions and the amended U2/U4/U5/U9. *(adversarial)*
+
+**Also resolved 2026-05-24 (second pass):**
+
+- ✅ **[was P2 · U7] Subscribers — Buttondown is the single source of truth.** No D1 `subscribers` table; subscribe form → Worker → Buttondown `POST /v1/subscribers` with a `daily` opt-in tag; fan-out filters by tag; unsubscribes are Buttondown-native (no drift). RWL stores no subscriber PII. Encoded in Key Technical Decisions, the D1 state model, U7, U10, and U14. *(scope)*
+- ✅ **[was P2 · U8/U7] Weekend Reads Slack treatment — threaded.** Short parent message ("📚 Weekend Reads — {date} · this week's lead: …") with per-cluster prose as threaded replies; approval DM carries a distinct "📚 Weekend Reads draft" header. Matches R12's literal "threaded on Slack." Encoded in U8. *(design)*
+- ✅ **[was P2 · U14] Slack-engagement instrumentation — deferred to post-launch (decided).** v1 ships without automated reaction/reply read-back; John eyeballs engagement manually. Added to Scope Boundaries → Deferred for later. Revisit once the publication has a few weeks of digests. *(product)*
+
+**Still open from the review:** none. (Remaining deferrals are the intentional v1 scope cuts in Scope Boundaries, not unresolved questions.)
