@@ -40,7 +40,7 @@ Origin R-IDs that this plan must satisfy (full text in the origin requirements d
 - **Canonical store:** R17
 - **Daily digest:** R6, R7, R8, R9, R10
 - **Weekend Reads:** R11, R12
-- **Public website:** R13, R14, R23, R26, R27
+- **Public website:** R13, R14 (amended — see Navigation Model), R23, R27. *(R26 topic-tag taxonomy dropped 2026-05-24 — navigation is medium + time-to-consume, not topic chips.)*
 - **Public subscription:** R22, R25
 - **Bootstrap:** R15, R19, R20
 - **Identity and tone:** R18, R21
@@ -123,11 +123,12 @@ No `docs/solutions/` exists in this repo. None to carry forward.
 ## Key Technical Decisions
 
 - **Single Cloudflare Worker control plane.** One deploy surface, one log stream, one secret store. Hosts the capture API, Slack interactivity webhook, daily/weekly cron triggers, durable approval timer, and the deploy-hook trigger. Cost: free tier. State: Cloudflare KV (small JSON blobs — pending drafts, dedupe keys) + D1 (relational — digest history, items shipped, email mapping for permalinks).
-- **Astro on Cloudflare Pages.** Content Layer loader fetches from Shiori at build time; Pagefind for client-side search; Preact island for tag-chip filtering and email signup; `@astrojs/rss` for RSS. Deploy hook from the Worker rebuilds on publish.
+- **Astro on Cloudflare Pages.** Content Layer loader fetches from Shiori at build time; Pagefind for client-side search; Preact island for medium/time-to-consume filtering and email signup; `@astrojs/rss` for RSS. Deploy hook from the Worker rebuilds on publish.
 - **Buttondown for email.** Markdown-native API, the right aesthetic for a curated AI publication, free at this scale.
 - **Buttondown is the single source of truth for subscribers (resolved 2026-05-24).** There is no D1 `subscribers` table. The subscribe form → Worker → Buttondown `POST /v1/subscribers`, tagging `daily` when the reader opts into daily emails. Fan-out targets audiences via Buttondown's tag filter; unsubscribes are Buttondown-native, so no list can drift. RWL therefore stores **no subscriber PII** of its own — Buttondown owns that data under its compliance — which also retires the D1-retention concern from the review.
 - **Shiori SaaS as canonical *bookmark* store**, not self-hosted. Pro tier ($10/mo) likely worth it for X bookmark sync (helpful for ongoing capture flow consistency with the bootstrap) and email-forwarding-as-capture as a backup ingestion path. *Verified 2026-05-24 — `shiori.sh` is real, the REST API supports the full pipeline (see External References).*
-- **Store model: split ownership, merge at build (resolved 2026-05-24).** Shiori owns **bookmark facts** (url, title, archived page, thumbnail, `created_at`). D1 owns **RWL editorial fields** — the "why" note, R/W/L classification, topic tags — plus all publication state (digests, fan-out, subscribers) and a capture durability log. The public site (U9) and the daily digest (U5) read **D1 as the spine** (which items, with their why/R-W-L/tags) and **join Shiori bookmark facts on `shiori_id` at build/compose time**. This keeps the "why" note — RWL's core asset — a first-class field immune to Shiori's auto-generated `summary`, and resolves the review's "enrichment never reaches the site" finding outright (the site reads the note from D1, so nothing needs to be written back to Shiori). It reinterprets R17 as "Shiori is the canonical *bookmark* store; RWL owns its editorial overlay," rather than a single literal source of truth.
+- **Store model: split ownership, merge at build (resolved 2026-05-24).** Shiori owns **bookmark facts** (url, title, archived page, thumbnail, `created_at`). D1 owns **RWL editorial fields** — the "why" note, R/W/L classification, the consume-time estimate — plus all publication state (digests, fan-out, subscribers) and a capture durability log. The public site (U9) and the daily digest (U5) read **D1 as the spine** (which items, with their why / R-W-L / consume-time) and **join Shiori bookmark facts on `shiori_id` at build/compose time**. This keeps the "why" note — RWL's core asset — a first-class field immune to Shiori's auto-generated `summary`, and resolves the review's "enrichment never reaches the site" finding outright (the site reads the note from D1, so nothing needs to be written back to Shiori). It reinterprets R17 as "Shiori is the canonical *bookmark* store; RWL owns its editorial overlay," rather than a single literal source of truth.
+- **Navigation model: medium + time-to-consume, no topic taxonomy (resolved 2026-05-24).** The public site is navigated by two orthogonal, auto-derived axes — **medium** (Read / Watch / Listen) and **time-to-consume** (⚡ Quick <5 min · ☕ Medium 5–20 min · 🍷 Deep 20 min+) — with a per-card minute estimate. There is **no topic-tag taxonomy** (R26 dropped); topic-seeking is served by full-text search, and at ~7 items/week the curator's taste is the filter. Both axes are deterministic (medium from URL type; time from word count / media duration) — no LLM classification, no tag overlap. Filters operate over the **whole collection, all time**, on the homepage feed and the archive; "this week" exists only as the Weekend Reads post.
 - **Two-phase publish.** A digest is *persisted* canonically in D1 first, then *fanned out* via independent retry-able tasks to (Slack channel, Buttondown, deploy hook). Each surface has its own status row. Slack DM approval marks the digest as `approved` in D1; fan-out workers pick up `approved` digests and update per-surface status. This makes partial fan-out failure recoverable and makes idempotency the natural default.
 - **Capture durability via server-side queue.** Client (Shortcut / extension) POSTs to the Worker. Worker writes the raw capture event into D1 immediately (the truth), then asynchronously writes to Shiori with retry. If Shiori is down, the capture is not lost. The LLM "why" pre-fill is best-effort: if it fails, the share sheet shows empty input or the user's typed note and the item is saved anyway.
 - **Weekend Reads is a recap, not net-new.** It republishes the week's items grouped thematically with LLM-drafted connector prose. This matches the "Weekend Reads" branding (something to read Saturday morning) and resolves the public email cadence question downstream.
@@ -154,15 +155,15 @@ No `docs/solutions/` exists in this repo. None to carry forward.
 - **Publish atomicity**: two-phase publish (persist canonical, then async fan-out, per-surface retry).
 - **Weekend Reads semantics**: recap of the week's items, thematically clustered.
 - **Public email cadence**: Weekend Reads only by default; daily opt-in.
-- **Tag taxonomy**: lock the origin-proposed set: Agents, Models, Tools, Research, Builders, Design, Workflow, Industry. Add/remove later as corpus grows. The LLM suggests one or two tags per item at capture; John can override.
+- **Navigation model** (supersedes the topic-tag taxonomy): the public site filters by **medium** (Read/Watch/Listen) and **time-to-consume** (Quick/Medium/Deep), not topic tags. R26 dropped; topic-seeking is served by full-text search. See the Navigation Model decision in Key Technical Decisions.
 
 ### Deferred to Implementation
 
-- **Exact LLM provider** (Anthropic vs OpenAI). Either works; lean Anthropic since the attribution names Claude and the brand will be visible. Decide at U5 based on per-1M-token pricing at the time of implementation.
+- ✅ **LLM provider — Anthropic / Claude (locked 2026-05-24).** Matches the "Assembled by Claude" attribution. Use a current Claude model; `LLM_API_KEY` is an Anthropic key.
 - **Exact D1 schema details** (indexes, foreign keys, exact column types). Get the rough shape right at U1; refine when actually writing queries.
-- **Domain name** for the public site. User decision. `rwl.johnintrater.com` is the fallback; `readwatchlisten.co` is the personal-brand stretch. Defer until U12.
-- **Attribution wording**. Working draft: "Curated by John Intrater · Assembled by Claude". Settle when designing the digest template at U7.
-- **Cloudflare Pages vs Vercel for static hosting**. Both fine; Cloudflare Pages keeps everything on one provider. Defer until U12.
+- ✅ **Domain — `rwl.johnintrater.com` (locked 2026-05-24).** Subdomain of a domain John controls; ties RWL to his personal brand, no new registration. DNS via Cloudflare at U12.
+- ✅ **Attribution wording — "Curated by John Intrater · Assembled by Claude" (locked 2026-05-24).** Used verbatim across Slack, email, and the site. This is the string fan-out integration tests assert.
+- ✅ **Static hosting — Cloudflare Pages (locked 2026-05-24).** Keeps everything on one provider.
 - **Whether to use Buttondown's RSS-to-email vs sending broadcasts via API**. Likely API for control; defer detail to U7.
 - **URL normalization rules** for capture dedupe (strip `utm_*`, `t.co` wrappers, canonical resolution). Implement a reasonable default at U2; refine when real captures show edge cases.
 
@@ -225,7 +226,7 @@ read-watch-listen/
 │   │   │   ├── pages/
 │   │   │   │   ├── index.astro
 │   │   │   │   ├── archive/
-│   │   │   │   │   ├── [tag].astro
+│   │   │   │   │   ├── [medium].astro
 │   │   │   │   │   └── [...week].astro
 │   │   │   │   ├── digests/
 │   │   │   │   │   └── [slug].astro
@@ -235,7 +236,7 @@ read-watch-listen/
 │   │   │   │   └── rss.xml.ts
 │   │   │   ├── components/
 │   │   │   │   ├── Card.astro
-│   │   │   │   ├── TagChips.tsx     # Preact island
+│   │   │   │   ├── Filters.tsx       # Preact island (medium + time)
 │   │   │   │   ├── SubscribeForm.tsx  # Preact island
 │   │   │   │   └── SearchBox.tsx    # Pagefind UI
 │   │   │   └── layouts/
@@ -331,7 +332,7 @@ sequenceDiagram
 ### State model (D1, simplified)
 
 ```
-captures(id, url, normalized_url, title, note, rwl_tag, topic_tags, source,
+captures(id, url, normalized_url, title, note, rwl_tag, consume_minutes, source,
          captured_at, shiori_id, shiori_status, bootstrap)
 
 digests(id, kind ['daily' | 'weekend'], composed_at, status ['draft' | 'pending'
@@ -414,7 +415,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - `POST /capture` accepts `{ url, note?, source }` with a bearer token (a long random secret known to the iOS Shortcut and Chrome extension).
 - URL normalization strips `utm_*`, `fbclid`, `t.co` wrappers (resolve once if cheap), trailing slashes, and lower-cases the host.
 - Dedupe key is the normalized URL. If a capture for the same normalized URL exists, treat the second capture as an update (overwrite the note if a new one is provided) and respond 200 with `{ status: 'updated' }`.
-- Write the capture row to D1 first (D1 holds the "why" note, R/W/L, topic tags — the editorial fields RWL owns per the store model), then create the bookmark in Shiori via `POST /api/links` (`url`, `title`; `created_at` for bootstrap). Only bookmark facts go to Shiori; editorial fields are NOT written back to it. Store the returned Shiori id as `shiori_id` on the capture row (the join key). If Shiori fails, the row is marked `shiori_status='pending'` and a background retry (next cron tick or a queue) reconciles.
+- Write the capture row to D1 first (D1 holds the "why" note and R/W/L — plus the consume-time estimate U4 adds — the editorial fields RWL owns per the store model), then create the bookmark in Shiori via `POST /api/links` (`url`, `title`; `created_at` for bootstrap). Only bookmark facts go to Shiori; editorial fields are NOT written back to it. Store the returned Shiori id as `shiori_id` on the capture row (the join key). If Shiori fails, the row is marked `shiori_status='pending'` and a background retry (next cron tick or a queue) reconciles.
 
 **Patterns to follow:** Shiori API docs at shiori.sh; standard Workers HTTP routing.
 
@@ -459,11 +460,11 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 ---
 
-- U4. **LLM "why" assist + R/W/L auto-classification + topic tag suggestion**
+- U4. **LLM "why" assist + R/W/L auto-classification + consume-time estimate**
 
-**Goal:** When a capture lacks a user-supplied note, an LLM job drafts one from the URL's metadata. The same job auto-classifies R/W/L from URL type and suggests topic tags.
+**Goal:** When a capture lacks a user-supplied note, an LLM job drafts one from the URL's metadata. The same job auto-classifies R/W/L from URL type and computes a consume-time estimate.
 
-**Requirements:** R3, R4, R26.
+**Requirements:** R3, R4.
 
 **Dependencies:** U2.
 
@@ -478,9 +479,9 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
   1. Fetches the canonical page title and description (from Shiori once synced, or via a lightweight `og:` fetch as backup).
   2. Calls the LLM with the `why-assist` prompt to draft a one-line note in John's voice, only if the user did not supply a note.
   3. Calls the LLM (or a separate cheap classifier) with the `classify` prompt to assign one of {Read, Watch, Listen} based on URL pattern + content type.
-  4. Calls the LLM to suggest one or two topic tags from the locked taxonomy.
+  4. Computes a consume-time estimate (no LLM): word count → minutes for reads (~225 wpm), video/episode duration for watches/listens; derives a time bucket — Quick (<5 min), Medium (5–20 min), Deep (20 min+).
   5. Writes the result to the capture row in D1. Per the store model, enrichment stays in D1 (it is not pushed to Shiori); the site and digest read it from D1, so it reaches every surface without a Shiori write-back.
-- The LLM job is best-effort. If it fails, the row keeps `note=null`, `rwl_tag='read'` (default), `topic_tags=[]`; the next digest can fill them in or John can override in the RWL editing path (D1), not in Shiori.
+- The LLM job is best-effort. If it fails, the row keeps `note=null`, `rwl_tag='read'` (default), `consume_minutes=null`; the next digest can fill them in or John can override in the RWL editing path (D1), not in Shiori.
 - The R/W/L classifier should be pattern-first (YouTube → Watch, Spotify/Apple podcasts → Listen, everything else → Read), with the LLM only resolving ambiguous cases.
 
 **Patterns to follow:** Anthropic SDK conventions; prompt-engineering best practices from research (voice card + samples).
@@ -492,7 +493,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Happy path: ambiguous article URL → LLM-resolved tag.
 - Edge case: capture with user-supplied note → LLM does NOT overwrite the user note; classification and tags still run.
 - Error path: LLM returns 5xx or times out → capture row stays in its prior state; row is marked `llm_status='failed'` for later retry.
-- Edge case: LLM returns a topic tag outside the locked taxonomy → silently dropped; only tags from `['Agents','Models','Tools','Research','Builders','Design','Workflow','Industry']` are accepted.
+- Edge case: consume-time estimate — a ~1,800-word article → ~8 min → bucket `medium`; a 3-min YouTube clip → `quick`; a ~50-min podcast → `deep`. Missing content/duration → `consume_minutes=null`, time badge omitted (not a failure).
 - Integration: timer of "user-note-precedence-over-LLM-note" enforced — even if both write to the row in close succession, the user note wins.
 
 **Verification:**
@@ -525,7 +526,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Cron fires at 7am PT Sun–Fri (`0 14 * * 0-5`); Saturday is intentionally skipped so the daily digest never double-sends the same captures that the Saturday Weekend Reads recap re-publishes (see U8). 14:00 UTC; daylight saving will need a manual swap or a fixed UTC choice.
 - Pull captures from **D1** (the authoritative spine for editorial fields) since the last `digest_id` with `kind='daily'`. Skip captures flagged `bootstrap=true`. Exclude captures with `shiori_status != 'synced'` so every included item has joinable Shiori bookmark facts and a live permalink (prevents the shipped-link-404 case); deferred items roll into the next digest. Bookmark facts (title, thumbnail) come from Shiori via `GET /api/links` joined on `shiori_id`.
 - If zero new items, mark the day as "skipped" in D1 (so we have a record) and exit. No fan-out.
-- Otherwise, build the prompt: voice card + 3 anchor samples + items (URL, title, R/W/L tag, topic tags, "why" note). Request a markdown body with a natural opener, items grouped by R/W/L, the user's "why" verbatim, and the signature line.
+- Otherwise, build the prompt: voice card + 3 anchor samples + items (URL, title, R/W/L tag, consume-time, "why" note). Request a markdown body with a natural opener, items grouped by R/W/L, the user's "why" verbatim, and the signature line.
 - Use a cheaper, separate "cluster" LLM call first if there are ≥3 items, to suggest a connector sentence theme. Keep that out of the voice-prompted call.
 - Persist as `digests` row with `kind='daily'`, `status='draft'`, `body_md`, `composed_at`, `slug` (date-based).
 
@@ -674,11 +675,11 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 ### Phase C — Public website
 
-- U9. **Astro site scaffolding + Shiori Content Layer + tag taxonomy lock**
+- U9. **Astro site scaffolding + Shiori Content Layer + medium/time filter model**
 
-**Goal:** Stand up the Astro 5 project with a Content Layer loader fetching items from Shiori, the locked tag taxonomy as a typed enum, and a base layout.
+**Goal:** Stand up the Astro 5 project with a Content Layer loader fetching items from Shiori, the medium + time-to-consume filter model, and a base layout.
 
-**Requirements:** R13, R23, R26, R27.
+**Requirements:** R13, R23, R27.
 
 **Dependencies:** U2 (Shiori must be writeable so there's something to read from).
 
@@ -687,12 +688,12 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Create: `apps/site/src/content/config.ts` (Content Layer loader)
 - Create: `apps/site/src/layouts/Base.astro`
 - Create: `apps/site/src/components/Card.astro`
-- Create: `apps/site/src/lib/taxonomy.ts` (locked tag list as exported const)
+- Create: `apps/site/src/lib/filters.ts` (R/W/L media + time-bucket thresholds as exported consts)
 - Test: `apps/site/test/content-loader.test.ts`
 
 **Approach:**
-- `apps/site/src/content/config.ts` defines a `curatedItems` collection using Astro's Content Layer with a custom `loader` that, at build time, fetches the **RWL item spine from the Worker/D1** (the editorial fields: `note`, `rwlTag`, `topicTags[]`, `slug`, `shiori_id`) and **joins Shiori bookmark facts** (`title`, thumbnail, archive) via `GET /api/links` on `shiori_id`. Schema validation ensures every item has `{ url, title, note?, rwlTag, topicTags[], capturedAt, slug }`. If a Shiori record is missing/unreachable at build, fall back to the D1-cached title rather than dropping the item; items with invalid tags cause a build warning but don't fail the build.
-- `lib/taxonomy.ts` exports the locked taxonomy: `['Agents','Models','Tools','Research','Builders','Design','Workflow','Industry']`. Used by the Content Layer schema, by the tag-chip island in U10, and by the Worker's classifier in U4.
+- `apps/site/src/content/config.ts` defines a `curatedItems` collection using Astro's Content Layer with a custom `loader` that, at build time, fetches the **RWL item spine from the Worker/D1** (the editorial fields: `note`, `rwlTag`, `consumeMinutes`, `slug`, `shiori_id`) and **joins Shiori bookmark facts** (`title`, thumbnail, archive) via `GET /api/links` on `shiori_id`. Schema validation ensures every item has `{ url, title, note?, rwlTag, consumeMinutes?, capturedAt, slug }`. If a Shiori record is missing/unreachable at build, fall back to the D1-cached title rather than dropping the item; items missing a consume-time estimate render without the time badge but don't fail the build.
+- `lib/filters.ts` defines the R/W/L media and the time-bucket thresholds (Quick <5 min / Medium 5–20 min / Deep 20 min+). Used by the Content Layer schema, by the filter island in U10, and by U4's consume-time computation.
 - Base layout includes the curated.supply-style chrome: wordmark, top nav (Discover / Browse / Weekend Reads / About).
 
 **Patterns to follow:** Astro Content Layer docs; curated.supply's layout vocabulary (clean grid, prominent subscribe, minimal chrome).
@@ -708,9 +709,9 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 ---
 
-- U10. **Homepage + tag chip filter + email subscribe form**
+- U10. **Homepage + medium/time filters + email subscribe form**
 
-**Goal:** The homepage above-the-fold (per origin R27): wordmark, nav, one-liner, email subscribe form, tag chip row. Card grid of items below. Tag chips filter the grid client-side without a full page reload.
+**Goal:** The homepage above-the-fold (per origin R27): wordmark, nav, one-liner, email subscribe form, and two filter rows — **medium** (Read/Watch/Listen) and **time-to-consume** (Quick/Medium/Deep). Card grid of items below. Filters narrow the grid client-side without a full page reload, over the whole collection (not just this week).
 
 **Requirements:** R13, R14, R22, R27, AE6.
 
@@ -718,27 +719,27 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 **Files:**
 - Create: `apps/site/src/pages/index.astro`
-- Create: `apps/site/src/components/TagChips.tsx` (Preact island)
+- Create: `apps/site/src/components/Filters.tsx` (Preact island — medium + time-to-consume)
 - Create: `apps/site/src/components/SubscribeForm.tsx` (Preact island)
 - Modify: `apps/site/astro.config.mjs` (add `@astrojs/preact` integration)
 - Test: `apps/site/test/tag-filter.test.ts`
 
 **Approach:**
-- Homepage renders a card per item, sorted newest-first. Each card has the curated.supply visual treatment: thumbnail (if available), brand/source, title, "why" note, R/W/L indicator icon, topic tags.
-- Tag chips are a Preact island. Tapping a chip filters the grid via DOM class toggling (zero JS heavy work — the grid is already rendered, the island just hides/shows cards). Active chip state is reflected in `?tag=` URL param for shareability.
+- Homepage renders a card per item, sorted newest-first, over the whole collection (all time). Each card has the curated.supply visual treatment: thumbnail (if available), brand/source, title, "why" note, R/W/L medium icon, and the consume-time estimate (e.g. "8 min").
+- The filter island (Preact) has two single-select rows — **medium** (Read/Watch/Listen) and **time-to-consume** (Quick/Medium/Deep), each with an implicit "All". Selecting narrows the already-rendered grid via DOM class toggling (the island just hides/shows cards). Active state is reflected in `?medium=` and `?time=` URL params for shareability, and the two compose (e.g. Watch + Quick).
 - Email subscribe form: a simple `<form>` posting to `/api/subscribe` on the Worker, which calls Buttondown `POST /v1/subscribers` (Buttondown is the source of truth — no D1 write). POST succeeds → show "thanks, check your email." Buttondown reports an existing subscriber → show "you're already subscribed." Failure → inline error.
 - Subscribe form has a "daily updates too" checkbox; default is off (Weekend Reads only). When checked, the Worker adds the `daily` tag to the Buttondown subscriber; unchecked leaves them on the default Weekend-Reads-only audience.
-- Above-the-fold composition is enforced via layout — content begins immediately below the chip row.
+- Above-the-fold composition is enforced via layout — content begins immediately below the filter rows.
 
 **Patterns to follow:** curated.supply's hero composition; Astro islands for minimal hydration.
 
 **Test scenarios:**
-- **Covers AE6.** Happy path: page loads with the card grid; tapping "Agents" chip filters to items tagged Agents; URL updates to `?tag=Agents`; subscribe form submits successfully with email.
-- Edge case: zero items match the selected tag → empty state shows "No items tagged X yet."
+- **Covers AE6 (adapted).** Happy path: page loads with the card grid; selecting **Watch** filters to watch items; adding **⚡ Quick** narrows to short watches; URL updates to `?medium=watch&time=quick`; subscribe form submits successfully with email.
+- Edge case: zero items match the selected filters → empty state shows "Nothing matches — clear a filter."
 - Edge case: subscribe with an invalid email → inline validation error, no Worker call.
 - Edge case: subscribe with a duplicate email → Worker responds "already subscribed"; form shows that message.
-- Edge case: tap a chip then tap it again → grid returns to "all" state.
-- Integration: tag chip set on the homepage matches the locked taxonomy in `lib/taxonomy.ts` — no hardcoded duplicates.
+- Edge case: select a filter then clear it → grid returns to "all" for that axis.
+- Integration: filter controls match the media and time buckets defined in `lib/filters.ts` — no hardcoded duplicates.
 
 **Verification:**
 - Manual: visit deployed site, filter by each tag, subscribe with a test email and verify Buttondown receives it.
@@ -747,14 +748,14 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 - U11. **Archive pages + Pagefind search + Weekend Reads layout + RSS**
 
-**Goal:** Browseable archive (`/archive/[tag]`, `/archive/[year]/[week]`), full-text search via Pagefind, distinct Weekend Reads page layout, RSS feed.
+**Goal:** Browseable archive (`/archive/[medium]`, `/archive/[year]/[week]`), full-text search via Pagefind, distinct Weekend Reads page layout, RSS feed.
 
 **Requirements:** R14, R23, R25, AE7.
 
 **Dependencies:** U9, U10.
 
 **Files:**
-- Create: `apps/site/src/pages/archive/[tag].astro`
+- Create: `apps/site/src/pages/archive/[medium].astro`
 - Create: `apps/site/src/pages/archive/[...week].astro`
 - Create: `apps/site/src/pages/weekend-reads/[slug].astro`
 - Create: `apps/site/src/pages/digests/[slug].astro`
@@ -764,7 +765,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - Test: `apps/site/test/archive.test.ts`
 
 **Approach:**
-- Archive pages use Astro's dynamic routing (`getStaticPaths`) to generate one page per tag, one per week.
+- Archive pages use Astro's dynamic routing (`getStaticPaths`) to generate one page per medium (read/watch/listen), one per week. The medium + time-to-consume filters from U10 are available on archive views too.
 - Pagefind runs as a post-build step (`astro-pagefind` integration) and produces a sharded index in `dist/pagefind/`. The search box is a small Preact island that loads the Pagefind UI on first interaction.
 - Weekend Reads layout is visibly distinct: full-width prose block on top (the LLM-drafted body), then the cards grouped by cluster label. The page title is "Weekend Reads — [date]" matching AE7.
 - Daily digest layout is similar but with a tighter intro and items grouped by R/W/L.
@@ -910,7 +911,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 - **State lifecycle risks:** Idempotency keys cover Slack interactivity (double-tap, network retry) and digest fan-out (race between Ship click and 30-min timer). KV TTLs prevent unbounded growth. D1 schema is append-mostly; deletes only via runbook procedures.
 - **API surface parity:** The capture API contract is the same across iOS Shortcut, Chrome extension, and bootstrap script. URL normalization and dedupe rules are centralized in `lib/url.ts` so every entry point behaves identically.
 - **Integration coverage:** Mocks alone won't prove the Slack approval flow or the multi-surface fan-out is correct. Integration tests use a Slack sandbox workspace, a Buttondown sandbox account, and a Cloudflare Pages preview deploy.
-- **Unchanged invariants:** N/A — greenfield. Future-state invariants the plan establishes and must be preserved by later work: the publication's attribution string format, the locked tag taxonomy, the daily/Weekend cadence rhythm.
+- **Unchanged invariants:** N/A — greenfield. Future-state invariants the plan establishes and must be preserved by later work: the publication's attribution string format, the medium + time-to-consume navigation model, the daily/Weekend cadence rhythm.
 
 ---
 
@@ -941,7 +942,7 @@ Stand up the capture pipeline: repo, Worker, D1/KV, Shiori, capture API + client
 Build the daily digest composer, the Slack approval DM with durable timer, the multi-surface fan-out, and the Weekend Reads variant. Outcome: a digest composed from real captures gets DM'd to John, approved, and fans out to (eventually) Slack + email + site.
 
 ### Phase C — Public website (U9–U12)
-Build and deploy the Astro public site, including the homepage, tag chip filter, archive pages, Pagefind search, RSS feed, and Cloudflare Pages deploy with the Worker's deploy-hook wired up. Outcome: the public site is live, browsable, subscribable.
+Build and deploy the Astro public site, including the homepage, medium/time filters, archive pages, Pagefind search, RSS feed, and Cloudflare Pages deploy with the Worker's deploy-hook wired up. Outcome: the public site is live, browsable, subscribable.
 
 ### Phase D — Launch readiness (U13–U14)
 Bootstrap from John's Twitter bookmark archive. Ops observability and dry-run mode. Runbook. Outcome: the corpus is non-empty, errors are visible, and the launch sequence is documented. After dry-run validation, `#rwl` opens and the public URL is shared.
@@ -962,7 +963,7 @@ Bootstrap from John's Twitter bookmark archive. Ops observability and dry-run mo
 - **Self-hosted Shiori instead of SaaS.** Rejected: adds ops burden for a one-person publication. The SaaS Pro tier ($10/mo) is cheap insurance.
 - **Notion as the canonical store.** Rejected during brainstorming (see origin Key Decisions); reaffirmed here. Shiori is purpose-built; Notion would require glue code Brian has already written.
 - **Next.js or Hugo for the public site.** Rejected during research. Astro wins on REST ingestion ergonomics, build performance for the card-grid use case, and aesthetic fit.
-- **One git repo per app vs monorepo.** Rejected. pnpm workspaces keeps the worker, site, and bootstrap together; they share the tag taxonomy and capture-event type, and they ship as one product.
+- **One git repo per app vs monorepo.** Rejected. pnpm workspaces keeps the worker, site, and bootstrap together; they share the filter model and capture-event type, and they ship as one product.
 - **Native iOS Share Extension v1.** Rejected for v1; deferred to follow-up. The iOS Shortcut covers the "3 taps" requirement at zero ongoing maintenance cost.
 - **Real-time WebSocket capture stream.** Rejected. Daily cadence makes polling fine; complexity buys nothing.
 - **A dedicated approval UI in the Worker (instead of Slack DM).** Rejected. John already lives in Slack; a separate URL means another tab, breaking the "ship it in one tap" flow.
@@ -1019,8 +1020,8 @@ Applied during a compound-engineering multi-persona review (coherence, feasibili
 - **Rate limiting (security):** Apply Cloudflare Workers Rate Limiting to `/api/subscribe` (e.g., 3 attempts per IP per hour) so subscriber-flooding past Buttondown's free-tier cap is throttled at the edge. Duplicate detection is Buttondown-native (it reports an existing subscriber) — there is no D1 `subscribers` table to constrain (see store-model / subscriber decision).
 - **Subscribe-form states (design):** idle / submitting (button disabled, "Subscribing…") / success (form replaced with confirmation) / duplicate (field retained, "You're already subscribed") / invalid (inline "Enter a valid email", no Worker call) / server-error (field retained, "Something went wrong — try again").
 - **Opt-in checkbox (design):** Label "Also send me daily digests (Mon–Fri)", below the email field, default unchecked. Form POSTs `{ email, daily_opt_in }`; the Worker sets the Buttondown `daily` tag on the subscriber when true (no D1 write — Buttondown owns subscription state), so audience segmentation is a native tag filter.
-- **Tag chips (design):** Single-select with an implicit "All" — prepend an "All" chip, active by default; selecting a taxonomy chip deactivates the prior one; `?tag=` is absent when "All" is active.
-- **Empty homepage state (design):** When the items collection is empty, render "Items coming soon — subscribe to be the first to know." below the chip row and hide the tag chips (don't show zero-count chips).
+- **Filters (design):** Two single-select rows — medium (Read/Watch/Listen) and time-to-consume (Quick/Medium/Deep), each with an implicit "All" active by default; `?medium=`/`?time=` params absent when "All". The two axes compose (e.g. Watch + Quick).
+- **Empty homepage state (design):** When the items collection is empty, render "Items coming soon — subscribe to be the first to know." below the filter rows and hide the filter controls (don't show zero-count options).
 
 ### U13 — Bootstrap
 - **Simplify CLI (scope):** Use a plain Node `readline` raw-mode keypress loop (`a`/`s`/`e`/`q`) instead of `ink`/`prompts`. Avoids a React-based TUI dependency (and its peer-dep conflict risk with the Preact/Astro workspace) in a one-time script.
@@ -1041,7 +1042,7 @@ The first three (the "which store is the source of truth?" root) were **resolved
 **Resolved 2026-05-24:**
 
 - ✅ **[was P0 · U2] What Shiori actually is — VERIFIED.** `shiori.sh` is Brian Lovin's hosted SaaS (distinct from the unrelated `go-shiori/shiori` self-hosted project the citation wrongly pointed at). Its REST API supports the whole pipeline — `POST /api/links` (create, with `created_at` override), `PATCH /api/links/:id`, `GET /api/links?since=<ISO8601>` (the exact "list since" the poll needs), tag ops, Bearer `shk_…` auth. Capability claims and the iOS-Shortcut reference are corrected in External References. *(feasibility)*
-- ✅ **[was P1 · U4/U9 + U5/U9] Store authority — RESOLVED via split-ownership/merge-at-build (Option B).** D1 owns RWL editorial fields (why note, R/W/L, topic tags); Shiori owns bookmark facts; site (U9) and digest (U5) read D1 as the spine and join Shiori on `shiori_id`, excluding `shiori_status != 'synced'` items. This dissolves both the "enrichment never reaches the site" and "shipped permalink 404" findings. See the store-model decision in Key Technical Decisions and the amended U2/U4/U5/U9. *(adversarial)*
+- ✅ **[was P1 · U4/U9 + U5/U9] Store authority — RESOLVED via split-ownership/merge-at-build (Option B).** D1 owns RWL editorial fields (why note, R/W/L, consume-time); Shiori owns bookmark facts; site (U9) and digest (U5) read D1 as the spine and join Shiori on `shiori_id`, excluding `shiori_status != 'synced'` items. This dissolves both the "enrichment never reaches the site" and "shipped permalink 404" findings. See the store-model decision in Key Technical Decisions and the amended U2/U4/U5/U9. *(adversarial)*
 
 **Also resolved 2026-05-24 (second pass):**
 
