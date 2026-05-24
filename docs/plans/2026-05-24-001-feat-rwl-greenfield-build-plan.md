@@ -16,7 +16,7 @@ origin: docs/brainstorms/2026-05-24-rwl-requirements.md
 
 RWL is a curated AI link publication owned by John Intrater. It captures links via mobile/browser share sheets, stores them in Shiori (SaaS), and publishes daily digests + weekly "Weekend Reads" to three surfaces simultaneously: a private Faire Slack channel, a public email/RSS list, and a public static website. AI is an explicit co-author across all surfaces.
 
-This plan delivers the greenfield product end-to-end across four phases. The control plane (capture API, digest cron, Slack interactivity, state) lives in a single Cloudflare Worker with KV+D1 for state. The public site is an Astro static site on Cloudflare Pages, rebuilt on each digest publish via a deploy hook. Email goes through Buttondown. Shiori is the canonical bookmark store.
+This plan delivers the greenfield product end-to-end across four phases. RWL runs on **Vercel**: the control plane (capture API, digest cron, Slack interactivity, state) is **Vercel Functions + Vercel Cron**, with all state in **Vercel Postgres**. The public site is an Astro static site on **Vercel**, rebuilt on each digest publish via a deploy hook. Email goes through Buttondown. Shiori is the canonical bookmark store.
 
 ---
 
@@ -110,24 +110,25 @@ No `docs/solutions/` exists in this repo. None to carry forward.
   - `PATCH /api/links/:id` — update title/summary/saved-date; `set_link_tags` for tags
   - `GET /api/links?since=<ISO8601>` — "only return links created at or after this time" (digest poll); also `limit`/`offset`, `search`, `tag` filters
   - Note: schema exposes `title` + `summary` + tags, but **no dedicated free-text user-note field** — RWL's "why" note lives in D1 (see store-model decision below).
-- **iOS Shortcut pattern** for share-sheet POST with note prompt: `Get Contents of URL` action with manually-authored JSON Text body (workaround for the multi-value field bug). References: [Linkding gist](https://gist.github.com/andrewdolphin/a7dff49505e588d940bec55132fab8ad), and Brian Lovin's own Shiori iOS Shortcut guide (linked from his X announcement / shiori.sh). *(The earlier `go-shiori/shiori#284` citation was the wrong project — corrected.)* RWL's capture client POSTs to the Worker's `/capture`, not to Shiori directly, so the Shortcut targets the Worker.
+- **iOS Shortcut pattern** for share-sheet POST with note prompt: `Get Contents of URL` action with manually-authored JSON Text body (workaround for the multi-value field bug). References: [Linkding gist](https://gist.github.com/andrewdolphin/a7dff49505e588d940bec55132fab8ad), and Brian Lovin's own Shiori iOS Shortcut guide (linked from his X announcement / shiori.sh). *(The earlier `go-shiori/shiori#284` citation was the wrong project — corrected.)* RWL's capture client POSTs to the API's `/capture`, not to Shiori directly, so the Shortcut targets the Vercel Functions endpoint.
 - **LLM voice priming (2026)**: system-prompt voice card + 3 anchor samples > fine-tuning. Frontier models (Claude Opus 4.7, GPT-5) follow voice cards well enough that fine-tuning's marginal lift is not worth the lock-in.
 - **Twitter/X bookmark export**: official archive ZIP still doesn't include bookmarks (2026); official API capped at 800. Use [`prinsss/twitter-web-exporter`](https://github.com/prinsss/twitter-web-exporter) Tampermonkey userscript for one-time bootstrap.
 - **Slack approval pattern**: Block Kit `actions` block, `chat.update` (not `response_url`) for state changes, durable timer in storage (not in-memory). Idempotency on `(message_ts, action_id, user_id)`. ACK Slack within 3s.
 - **Email**: Buttondown is the strongest fit for a personal AI curation newsletter at this scale — free <100 subs, $9/mo at 1K, markdown-native API, RSS-to-email and email-to-RSS first-class.
-- **Static site**: Astro 5 (Content Collections + Content Layer) on Cloudflare Pages. Pagefind for full-text search. `@astrojs/rss` for RSS. Build < 30s for hundreds of items.
-- **Cron / control plane**: Cloudflare Workers Cron Triggers with KV+D1 for state. Single Worker hosts: capture ingest API, Slack interactivity webhook, daily/weekly cron, durable timer for auto-ship. Static site rebuild triggered via Cloudflare Pages deploy hook (a single `curl` from the Worker).
+- **Static site**: Astro 5 (Content Collections + Content Layer) on **Vercel** (`@astrojs/vercel` adapter, static output). Pagefind for full-text search. `@astrojs/rss` for RSS. Build < 30s for hundreds of items.
+- **Cron / control plane**: **Vercel Cron** (schedules in `vercel.json`) with **Vercel Postgres** for state. The `apps/api` project hosts: capture ingest API, Slack interactivity webhook, subscribe endpoint, daily/weekly cron, durable timer for auto-ship. Static site rebuild triggered via a **Vercel deploy hook** (a single `POST` from `apps/api`). The 30-min auto-ship timer is a frequent Vercel Cron sweep over Postgres, or Upstash QStash's delayed message (decided at U6).
 
 ---
 
 ## Key Technical Decisions
 
-- **Single Cloudflare Worker control plane.** One deploy surface, one log stream, one secret store. Hosts the capture API, Slack interactivity webhook, daily/weekly cron triggers, durable approval timer, and the deploy-hook trigger. Cost: free tier. State: Cloudflare KV (small JSON blobs — pending drafts, dedupe keys) + D1 (relational — digest history, items shipped, email mapping for permalinks).
-- **Astro on Cloudflare Pages.** Content Layer loader fetches from Shiori at build time; Pagefind for client-side search; Preact island for medium/time-to-consume filtering and email signup; `@astrojs/rss` for RSS. Deploy hook from the Worker rebuilds on publish.
+- **Platform: Vercel (revised 2026-05-24, supersedes Cloudflare).** RWL runs entirely on Vercel — John already uses and pays for it, so no new account to learn. The stack spans two Vercel projects — **`apps/api`** (Vercel Functions: capture API, Slack webhook, subscribe endpoint; + Vercel Cron for the daily/Friday digests and the auto-ship sweep) and **`apps/site`** (the Astro static site) — plus **Vercel Postgres** for all state. **KV is dropped** — its small ephemeral state folds into Postgres tables. The 30-min auto-ship timer is a frequent Vercel Cron sweep over Postgres, or Upstash QStash's delayed-message (decided at U6). *Terminology note:* the later units (U2–U14) were written against the original Cloudflare design and still say **"the Worker"** (read as Vercel Functions), **"D1"** (Vercel Postgres), **"KV"** (folded into Postgres), **"Cloudflare Pages"** (Vercel), and **"wrangler" / "wrangler.toml"** (Vercel CLI / `vercel.json`). Read those terms via this map; each unit's prose is corrected as ce-work reaches it.
+- **Vercel Functions control plane.** The `apps/api` project hosts the capture API, Slack interactivity webhook, subscribe endpoint, the daily/weekly cron jobs (declared in `vercel.json`), the durable auto-ship timer, and the deploy-hook trigger. State: **Vercel Postgres** — relational tables (`captures`, `digests`, `digest_items`, `fan_out_status`) plus the small ephemeral state KV used to hold (pending drafts, idempotency keys, `auto_ship_at`).
+- **Astro on Vercel.** Content Layer loader fetches the RWL item spine (from `apps/api` / Postgres) + Shiori facts at build time; Pagefind for client-side search; Preact island for medium/time-to-consume filtering and email signup; `@astrojs/rss` for RSS. A Vercel deploy hook (fired by `apps/api`) rebuilds the site on publish.
 - **Buttondown for email.** Markdown-native API, the right aesthetic for a curated AI publication, free at this scale.
-- **Buttondown is the single source of truth for subscribers (resolved 2026-05-24).** There is no D1 `subscribers` table. The subscribe form → Worker → Buttondown `POST /v1/subscribers`, tagging `daily` when the reader opts into daily emails. Fan-out targets audiences via Buttondown's tag filter; unsubscribes are Buttondown-native, so no list can drift. RWL therefore stores **no subscriber PII** of its own — Buttondown owns that data under its compliance — which also retires the D1-retention concern from the review.
+- **Buttondown is the single source of truth for subscribers (resolved 2026-05-24).** There is no D1 `subscribers` table. The subscribe form → the API → Buttondown `POST /v1/subscribers`, tagging `daily` when the reader opts into daily emails. Fan-out targets audiences via Buttondown's tag filter; unsubscribes are Buttondown-native, so no list can drift. RWL therefore stores **no subscriber PII** of its own — Buttondown owns that data under its compliance — which also retires the D1-retention concern from the review.
 - **Shiori SaaS as canonical *bookmark* store**, not self-hosted. Pro tier ($10/mo) likely worth it for X bookmark sync (helpful for ongoing capture flow consistency with the bootstrap) and email-forwarding-as-capture as a backup ingestion path. *Verified 2026-05-24 — `shiori.sh` is real, the REST API supports the full pipeline (see External References).*
-- **Store model: split ownership, merge at build (resolved 2026-05-24).** Shiori owns **bookmark facts** (url, title, archived page, thumbnail, `created_at`). D1 owns **RWL editorial fields** — the "why" note, R/W/L classification, the consume-time estimate — plus all publication state (digests, fan-out, subscribers) and a capture durability log. The public site (U9) and the daily digest (U5) read **D1 as the spine** (which items, with their why / R-W-L / consume-time) and **join Shiori bookmark facts on `shiori_id` at build/compose time**. This keeps the "why" note — RWL's core asset — a first-class field immune to Shiori's auto-generated `summary`, and resolves the review's "enrichment never reaches the site" finding outright (the site reads the note from D1, so nothing needs to be written back to Shiori). It reinterprets R17 as "Shiori is the canonical *bookmark* store; RWL owns its editorial overlay," rather than a single literal source of truth.
+- **Store model: split ownership, merge at build (resolved 2026-05-24).** Shiori owns **bookmark facts** (url, title, archived page, thumbnail, `created_at`). Postgres owns **RWL editorial fields** — the "why" note, R/W/L classification, the consume-time estimate — plus all publication state (digests, fan-out, subscribers) and a capture durability log. The public site (U9) and the daily digest (U5) read **Postgres as the spine** (which items, with their why / R-W-L / consume-time) and **join Shiori bookmark facts on `shiori_id` at build/compose time**. This keeps the "why" note — RWL's core asset — a first-class field immune to Shiori's auto-generated `summary`, and resolves the review's "enrichment never reaches the site" finding outright (the site reads the note from D1, so nothing needs to be written back to Shiori). It reinterprets R17 as "Shiori is the canonical *bookmark* store; RWL owns its editorial overlay," rather than a single literal source of truth.
 - **Navigation model: medium + time-to-consume, no topic taxonomy (resolved 2026-05-24).** The public site is navigated by two orthogonal, auto-derived axes — **medium** (Read / Watch / Listen) and **time-to-consume** (⚡ Quick <5 min · ☕ Medium 5–20 min · 🍷 Deep 20 min+) — with a per-card minute estimate. There is **no topic-tag taxonomy** (R26 dropped); topic-seeking is served by full-text search, and at ~7 items/week the curator's taste is the filter. Both axes are deterministic (medium from URL type; time from word count / media duration) — no LLM classification, no tag overlap. Filters operate over the **whole collection, all time**, on the homepage feed and the archive; "this week" exists only as the Weekend Reads post.
 - **Two-phase publish.** A digest is *persisted* canonically in D1 first, then *fanned out* via independent retry-able tasks to (Slack channel, Buttondown, deploy hook). Each surface has its own status row. Slack DM approval marks the digest as `approved` in D1; fan-out workers pick up `approved` digests and update per-surface status. This makes partial fan-out failure recoverable and makes idempotency the natural default.
 - **Capture durability via server-side queue.** Client (Shortcut / extension) POSTs to the Worker. Worker writes the raw capture event into D1 immediately (the truth), then asynchronously writes to Shiori with retry. If Shiori is down, the capture is not lost. The LLM "why" pre-fill is best-effort: if it fails, the share sheet shows empty input or the user's typed note and the item is saved anyway.
@@ -163,7 +164,7 @@ No `docs/solutions/` exists in this repo. None to carry forward.
 - **Exact D1 schema details** (indexes, foreign keys, exact column types). Get the rough shape right at U1; refine when actually writing queries.
 - ✅ **Domain — `rwl.johnintrater.com` (locked 2026-05-24).** Subdomain of a domain John controls; ties RWL to his personal brand, no new registration. DNS via Cloudflare at U12.
 - ✅ **Attribution wording — "Curated by John Intrater · Assembled by Claude" (locked 2026-05-24).** Used verbatim across Slack, email, and the site. This is the string fan-out integration tests assert.
-- ✅ **Static hosting — Cloudflare Pages (locked 2026-05-24).** Keeps everything on one provider.
+- ✅ **Platform — Vercel (locked 2026-05-24, revised from Cloudflare).** John already uses and pays for Vercel. All-Vercel: Astro site + Vercel Functions + Vercel Cron + Vercel Postgres (KV dropped). See the Platform decision in Key Technical Decisions.
 - **Whether to use Buttondown's RSS-to-email vs sending broadcasts via API**. Likely API for control; defer detail to U7.
 - **URL normalization rules** for capture dedupe (strip `utm_*`, `t.co` wrappers, canonical resolution). Implement a reasonable default at U2; refine when real captures show edge cases.
 
@@ -179,24 +180,24 @@ read-watch-listen/
 │   └── workflows/
 │       └── ci.yml
 ├── apps/
-│   ├── worker/                  # Cloudflare Worker: control plane
-│   │   ├── wrangler.toml
+│   ├── api/                     # Vercel Functions + Cron: control plane
+│   │   ├── vercel.json          # cron schedules + function config
+│   │   ├── api/                 # Vercel file-based routes
+│   │   │   ├── capture.ts       # POST /api/capture
+│   │   │   ├── slack.ts         # POST /api/slack (interactivity)
+│   │   │   ├── subscribe.ts     # POST /api/subscribe
+│   │   │   └── cron/            # Vercel Cron targets
+│   │   │       ├── daily-digest.ts
+│   │   │       ├── weekend-reads.ts
+│   │   │       └── auto-ship.ts
 │   │   ├── src/
-│   │   │   ├── index.ts         # entry: routes + scheduled handler
-│   │   │   ├── routes/
-│   │   │   │   ├── capture.ts   # POST /capture
-│   │   │   │   └── slack.ts     # POST /slack/interactivity
-│   │   │   ├── jobs/
-│   │   │   │   ├── daily-digest.ts
-│   │   │   │   ├── weekend-reads.ts
-│   │   │   │   └── auto-ship.ts
 │   │   │   ├── lib/
 │   │   │   │   ├── shiori.ts    # Shiori API client
-│   │   │   │   ├── llm.ts       # LLM client + voice card
+│   │   │   │   ├── llm.ts       # Claude client + voice card
 │   │   │   │   ├── slack.ts     # Block Kit + chat.update
 │   │   │   │   ├── buttondown.ts
-│   │   │   │   ├── pages.ts     # deploy hook trigger
-│   │   │   │   ├── db.ts        # D1 wrapper
+│   │   │   │   ├── deploy.ts    # Vercel deploy-hook trigger
+│   │   │   │   ├── db.ts        # Postgres client
 │   │   │   │   └── url.ts       # URL normalization / dedupe
 │   │   │   ├── prompts/
 │   │   │   │   ├── voice-card.md
@@ -286,14 +287,14 @@ The tree is a scope declaration. The implementer may adjust as warranted.
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Worker Cron (07:00 PT)
+    participant Cron as Vercel Cron (07:00 PT)
     participant Shiori
     participant LLM
-    participant D1
+    participant D1 as Postgres
     participant SlackDM as Slack DM (John)
     participant SlackCh as Slack #rwl
     participant Buttondown
-    participant Pages as CF Pages
+    participant Pages as Vercel
 
     Cron->>Shiori: GET bookmarks since last_digest
     Shiori-->>Cron: items[]
@@ -329,7 +330,7 @@ sequenceDiagram
     end
 ```
 
-### State model (D1, simplified)
+### State model (Postgres, simplified)
 
 ```
 captures(id, url, normalized_url, title, note, rwl_tag, consume_minutes, source,
@@ -359,9 +360,9 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 ### Phase A — Foundation
 
-- U1. **Repo scaffolding + Cloudflare Worker + D1/KV + secrets**
+- U1. **Repo scaffolding + Vercel Functions + Postgres + secrets**
 
-**Goal:** Stand up the repo, the Cloudflare Worker control plane skeleton, D1 schema, KV namespace, secret management, and CI lint/test.
+**Goal:** Stand up the repo, the Vercel Functions (`apps/api`) control-plane skeleton, the Postgres schema, env-var/secret management, and CI lint/test.
 
 **Requirements:** R17 (canonical-store dependency: needs a place to host the API client and the digest state).
 
@@ -369,29 +370,29 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 **Files:**
 - Create: `package.json`, `README.md`, `.github/workflows/ci.yml`
-- Create: `apps/worker/wrangler.toml`, `apps/worker/src/index.ts`, `apps/worker/src/lib/db.ts`, `apps/worker/src/types.ts`
-- Create: `apps/worker/migrations/0001_initial.sql` (or wrangler-d1 migration files)
-- Test: `apps/worker/test/db.test.ts`
+- Create: `apps/api/vercel.json`, `apps/api/src/lib/db.ts` (Postgres client), `apps/api/src/types.ts`, a health-check route `apps/api/api/health.ts`
+- Create: `apps/api/migrations/0001_initial.sql`
+- Test: `apps/api/test/db.test.ts`
 
 **Approach:**
-- pnpm monorepo with workspaces for `apps/worker`, `apps/site`, `apps/bootstrap`, `apps/chrome-extension`.
-- Wrangler v3+ with Vitest for tests; TypeScript everywhere.
-- Define D1 schema covering `captures`, `digests`, `digest_items`, `fan_out_status`, `subscribers`. Don't bind to a specific column list yet; the schema lands in a migration committed to the repo.
-- KV namespace `RWL_STATE` for pending drafts, idempotency, and any small ephemeral state.
-- Secrets via `wrangler secret put`: `SHIORI_TOKEN`, `LLM_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `BUTTONDOWN_TOKEN`, `CF_PAGES_DEPLOY_HOOK`, `CAPTURE_TOKEN_IOS`, `CAPTURE_TOKEN_EXT`, `JOHN_SLACK_USER_ID`. (See Review-Driven Refinements for the per-client capture tokens and the Slack-actor assertion.)
+- pnpm monorepo with workspaces for `apps/api`, `apps/site`, `apps/bootstrap`, `apps/chrome-extension`.
+- Vercel CLI (`vercel`, `vercel dev`) with Vitest for tests; TypeScript everywhere.
+- Define the Postgres schema covering `captures`, `digests`, `digest_items`, `fan_out_status` (**no `subscribers` table** — Buttondown owns the subscriber list). Don't bind to a specific column list yet; the schema lands in a migration committed to the repo.
+- Ephemeral state (pending drafts, idempotency keys, `auto_ship_at`) lives in Postgres tables — **no separate KV store**.
+- Secrets as Vercel env vars (`vercel env add` or the dashboard — never pasted in chat): `SHIORI_TOKEN`, `LLM_API_KEY` (Anthropic), `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `BUTTONDOWN_TOKEN`, `DATABASE_URL` (Vercel Postgres), `VERCEL_DEPLOY_HOOK_URL`, `CAPTURE_TOKEN_IOS`, `CAPTURE_TOKEN_EXT`, `JOHN_SLACK_USER_ID`. (See Review-Driven Refinements for the per-client capture tokens and the Slack-actor assertion.)
 - CI runs lint, typecheck, unit tests on every push.
 
-**Patterns to follow:** No internal patterns; this is the foundation everyone else will follow. Lean on Cloudflare Workers official docs.
+**Patterns to follow:** No internal patterns; this is the foundation everyone else will follow. Lean on Vercel Functions, Vercel Cron, and Vercel Postgres official docs.
 
 **Test scenarios:**
-- Happy path: D1 wrapper opens, runs a `SELECT 1`, returns the result.
-- Happy path: KV wrapper writes a key with TTL, reads it back, key expires after TTL.
+- Happy path: Postgres client connects, runs a `SELECT 1`, returns the result.
+- Happy path: a row written to the ephemeral-state table is read back; an `auto_ship_at`-style timestamp can be queried by "due now".
 - Edge case: SQL migration is idempotent — running it twice doesn't error.
 
 **Verification:**
-- `wrangler deploy --dry-run` succeeds.
+- `vercel build` (or `vercel dev`) succeeds for `apps/api`.
 - `pnpm test` passes locally and in CI.
-- D1 migration applies cleanly to a fresh database.
+- The migration applies cleanly to a fresh Vercel Postgres database.
 
 ---
 
