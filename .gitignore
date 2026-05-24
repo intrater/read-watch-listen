@@ -16,9 +16,8 @@ build/
 .env.*.local
 .dev.vars
 
-# Cloudflare
-.wrangler/
-.mf/
+# Vercel
+.vercel/
 
 # IDE
 .vscode/

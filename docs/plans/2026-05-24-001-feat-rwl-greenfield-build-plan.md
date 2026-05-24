@@ -362,6 +362,17 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 - U1. **Repo scaffolding + Vercel Functions + Postgres + secrets**
 
+**Status:** ✅ Shipped 2026-05-24. Verified end-to-end: `pnpm typecheck` clean, `pnpm test` 5/5 (2 unit + 3 integration against live Neon Postgres), `0001_initial.sql` applied to the real DB, `vercel build` completes. The `rwl-api` Vercel project is linked to the `rwl` Neon database.
+
+**Implementation notes (resolved during U1, apply to later units):**
+- Postgres driver is `pg` (node-postgres); `apps/api/src/lib/db.ts` exposes `getPool()` / `query()` / `closePool()` reading `DATABASE_URL` (falls back to `POSTGRES_URL`).
+- Dropped KV is realized as a `kv_state(key, value JSONB, expires_at)` table — use it for pending drafts + idempotency markers.
+- **TS config is NodeNext** → relative imports need explicit `.js` extensions (e.g. `import { query } from "../src/lib/db.js"`); Vercel's function compiler enforces this.
+- Vercel Functions use the Web signature (`export async function GET(): Promise<Response>`) in `apps/api/api/*.ts`; cron handlers live in `apps/api/api/cron/*.ts`, declared in `vercel.json` (added per-unit at U5/U6/U8, not in U1).
+- Node pinned to `22.x` via `apps/api/package.json` `engines` (Vercel max; local Node 24 just warns).
+- Integration tests self-skip unless `DATABASE_URL` is set, so CI stays green without a DB; the connection string lives in the gitignored `apps/api/.env.local` (the Neon vars are Sensitive in Vercel, so `vercel env pull` returns them empty — pull the snippet from Storage → rwl for local work).
+- Known cosmetic warnings to tidy later: pnpm `engines 22.x vs 24` notice; pg `sslmode` deprecation on Neon's `sslmode=require`.
+
 **Goal:** Stand up the repo, the Vercel Functions (`apps/api`) control-plane skeleton, the Postgres schema, env-var/secret management, and CI lint/test.
 
 **Requirements:** R17 (canonical-store dependency: needs a place to host the API client and the digest state).

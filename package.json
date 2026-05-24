@@ -1,0 +1,19 @@
+{
+  "name": "rwl",
+  "version": "0.0.0",
+  "private": true,
+  "description": "RWL — John Intrater's curated AI publication (Read · Watch · Listen)",
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
