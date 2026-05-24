@@ -455,6 +455,15 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 - U3. **iOS Shortcut + Chrome extension capture clients**
 
+**Status:** ✅ Shipped 2026-05-24 (commit `53f8e2f`). **Chrome extension verified end-to-end against production** — John loaded the unpacked MV3 extension, configured the token in its settings, and saved a real article (Politico AI-EO piece) that synced to Shiori with a live `shiori_id`. **iOS Shortcut delivered as a committed assembly spec (`ios/rwl-capture.shortcut.md`); manual on-device assembly deferred** — building the multi-action Shortcut on the phone proved too fiddly in-session, and capture already works via the extension, so it's a no-pressure follow-up (option on the table: generate an importable `.shortcut` file with the token baked in).
+
+**Implementation notes (resolved during U3, apply to later units):**
+- **The API is now LIVE in production: `https://rwl-api.vercel.app`** (stable alias; `/api/capture`, `/api/health`). This is the first deploy; U12 formalizes the custom domain (`rwl.johnintrater.com`) + deploy hooks.
+- **Deploy via remote build, NOT prebuilt.** `vercel deploy --prod` (uploads `apps/api` source, installs + builds on Vercel) works. `vercel build --prebuilt` from the `apps/api` subdir does **not** — it only bundles deps inside `apps/api`, and in a pnpm workspace `pg` lives outside it, so the function crashes with `FUNCTION_INVOCATION_FAILED` / `ERR_MODULE_NOT_FOUND: pg`. (Tried `nodeLinker: hoisted` to force flat deps; it hoists to the repo root, still outside `apps/api`, so it didn't help and was reverted. Remote build is the answer.)
+- **Vercel Deployment Protection was ON by default** (Vercel Authentication / `ssoProtection`), which walls the whole deployment behind Vercel SSO and blocks the capture clients. Disabled it via the API (`PATCH /v9/projects/{id}` `{"ssoProtection": null}` using the local CLI token) — the dashboard path is Settings → Deployment Protection. The endpoint is now public, gated only by the per-client bearer tokens.
+- **Capture tokens generated + set:** `CAPTURE_TOKEN_IOS` / `CAPTURE_TOKEN_EXT` (`openssl rand -hex 32`), in all 3 Vercel envs + `.env.local`. Never in the repo: the Chrome extension stores its token in `chrome.storage` (options page), the Shortcut holds it in the `Authorization` header. Mac→phone secret transfer pattern that worked: a local QR-code HTML page (token embedded client-side only, never in chat/cloud) scanned by the iPhone camera.
+- **Chrome extension** (`apps/chrome-extension/`, MV3): popup prefills the active tab, optional note, POSTs as `source:'chrome-ext'`; `host_permissions` cover `rwl-api.vercel.app` + the future `rwl.johnintrater.com`. Token + endpoint configured on the options page.
+
 **Goal:** Two client surfaces that POST to `/capture` — an iOS Shortcut for mobile/iPad and a minimal Chrome extension for desktop.
 
 **Requirements:** R1, R5, AE1.
