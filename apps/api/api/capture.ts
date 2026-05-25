@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
+import { waitUntil } from "@vercel/functions";
 import { handleCapture, validateCaptureInput, MAX_URL_LEN } from "../src/lib/capture.js";
+import { enrichCapture } from "../src/lib/enrich.js";
 import type { CaptureSource } from "../src/types.js";
 
 // POST /api/capture — the single ingest endpoint shared by the iOS Shortcut,
@@ -83,6 +85,17 @@ export async function POST(req: Request): Promise<Response> {
       note: (note as string | undefined) ?? null,
       source: client,
     });
+
+    // Best-effort async enrichment (LLM "why" note + R/W/L + consume-time).
+    // Fired after the row is persisted; it never blocks or fails the capture
+    // response. enrichCapture self-gates on llm_status='pending', so firing on
+    // every capture (including dedupe updates) is safe. Skipped when no LLM key
+    // is configured and under Vitest — the enrichment path is covered directly
+    // by enrich.integration.test.ts.
+    if (process.env.LLM_API_KEY && !process.env.VITEST) {
+      waitUntil(enrichCapture(result.id));
+    }
+
     return json(200, {
       status: result.status,
       id: result.id,
