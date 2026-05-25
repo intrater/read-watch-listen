@@ -1,0 +1,109 @@
+---
+import Base from "../layouts/Base.astro";
+import Card from "../components/Card.astro";
+import { getItems } from "../lib/items.js";
+
+const items = await getItems();
+
+const MEDIA: [string, string][] = [
+  ["all", "All"],
+  ["read", "Read"],
+  ["watch", "Watch"],
+  ["listen", "Listen"],
+];
+const TIMES: [string, string][] = [
+  ["all", "All"],
+  ["quick", "Quick"],
+  ["medium", "Medium"],
+  ["deep", "Deep"],
+];
+---
+
+<Base>
+  <header class="masthead">
+    <div class="container">
+      <p class="kicker">RWL</p>
+      <h1 class="wordmark">Read · Watch · Listen</h1>
+      <p class="tagline">Curated by <strong>John Intrater</strong> · Assembled by <strong>Claude</strong></p>
+      <p class="lede">A running index of the most interesting things in AI — saved, summarized, and sorted.</p>
+    </div>
+  </header>
+
+  <div class="filters">
+    <div class="container filters__inner">
+      <div class="filter-group" data-group="medium">
+        <span class="filter-label">Medium</span>
+        {MEDIA.map(([v, l]) => <button class={`pill ${v === "all" ? "is-active" : ""}`} data-value={v}>{l}</button>)}
+      </div>
+      <div class="filter-group" data-group="time">
+        <span class="filter-label">Time</span>
+        {TIMES.map(([v, l]) => <button class={`pill ${v === "all" ? "is-active" : ""}`} data-value={v}>{l}</button>)}
+      </div>
+      <span class="count">{items.length} links</span>
+    </div>
+  </div>
+
+  <main>
+    <div class="container">
+      <section class="grid" id="grid">
+        {items.map((it, i) => <Card item={it} index={i} />)}
+      </section>
+      <p class="empty" id="empty" hidden>Nothing matches — clear a filter.</p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p>RWL — Read · Watch · Listen · Curated by John Intrater · Assembled by Claude</p>
+    </div>
+  </footer>
+</Base>
+
+<script>
+  type Group = "medium" | "time";
+  const state: Record<Group, string> = { medium: "all", time: "all" };
+
+  const params = new URLSearchParams(location.search);
+  for (const g of ["medium", "time"] as Group[]) {
+    const v = params.get(g);
+    if (v) state[g] = v;
+  }
+
+  function apply() {
+    document.querySelectorAll<HTMLElement>(".filter-group").forEach((g) => {
+      const group = g.dataset.group as Group;
+      g.querySelectorAll<HTMLElement>(".pill").forEach((p) =>
+        p.classList.toggle("is-active", p.dataset.value === state[group]),
+      );
+    });
+
+    let shown = 0;
+    document.querySelectorAll<HTMLElement>("#grid .card").forEach((c) => {
+      const okM = state.medium === "all" || c.dataset.medium === state.medium;
+      const okT = state.time === "all" || c.dataset.time === state.time;
+      const visible = okM && okT;
+      c.hidden = !visible;
+      if (visible) shown++;
+    });
+
+    const empty = document.getElementById("empty");
+    if (empty) empty.hidden = shown > 0;
+
+    const u = new URL(location.href);
+    for (const g of ["medium", "time"] as Group[]) {
+      if (state[g] === "all") u.searchParams.delete(g);
+      else u.searchParams.set(g, state[g]);
+    }
+    history.replaceState({}, "", u);
+  }
+
+  document.querySelectorAll<HTMLElement>(".pill").forEach((p) => {
+    p.addEventListener("click", () => {
+      const group = (p.closest(".filter-group") as HTMLElement).dataset.group as Group;
+      state[group] = p.dataset.value!;
+      apply();
+    });
+  });
+
+  apply();
+</script>

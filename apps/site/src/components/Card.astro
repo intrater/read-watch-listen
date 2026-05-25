@@ -1,0 +1,44 @@
+---
+import type { Item } from "../lib/items.js";
+
+interface Props {
+  item: Item;
+  index: number;
+}
+
+const { item, index } = Astro.props;
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const delay = Math.min(index, 14);
+
+// Deterministic tint for cards with no real image, so the grid stays uniform.
+let h = 0;
+for (const ch of item.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+const tint = h % 5;
+---
+
+<article class="card" data-medium={item.medium} data-time={item.time} style={`--i:${delay}`}>
+  <a class="card__link" href={item.url} target="_blank" rel="noopener noreferrer">
+    {
+      item.image ? (
+        <div class="card__cover">
+          <img src={item.image} alt="" loading="lazy" />
+        </div>
+      ) : (
+        <div class={`card__cover card__plate plate--${tint}`}>
+          <p class="plate__text">{item.headline}</p>
+        </div>
+      )
+    }
+    <div class="card__body">
+      <div class="card__meta">
+        <span class="card__source">{item.author ?? item.source}</span>
+        <span class="card__date">{item.dateLabel}</span>
+      </div>
+      {item.image && <p class="card__headline">{item.headline}</p>}
+    </div>
+    <div class="card__badges">
+      <span class={`badge badge--${item.medium}`}>{cap(item.medium)}</span>
+      <span class="badge badge--time">{cap(item.time)}</span>
+    </div>
+  </a>
+</article>

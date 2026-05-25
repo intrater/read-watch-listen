@@ -1,0 +1,12 @@
+# build output
+dist/
+.astro/
+# og:image fetch cache
+.cache/
+# deps
+node_modules/
+# local secrets / env
+.env
+.env.local
+# vercel
+.vercel/

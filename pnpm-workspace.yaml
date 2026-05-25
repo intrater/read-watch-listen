@@ -2,5 +2,11 @@ packages:
   - "apps/*"
 
 # esbuild ships a platform binary via a postinstall script; vitest needs it.
-allowBuilds:
-  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
+
+# Astro pulls sharp (image optimization) transitively, but the site uses plain
+# <img> (no astro:assets), so sharp is never imported. Don't build the native
+# binary — just stop pnpm from treating the skipped build as a hard error.
+ignoredBuiltDependencies:
+  - sharp
