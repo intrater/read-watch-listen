@@ -466,7 +466,7 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 
 **Trade-off recorded:** going Shiori-direct on iOS means iPhone captures **do not write to our Postgres `captures` table at capture time**. The digest pipeline (U5) reads Postgres as the spine, so we now owe a **small Shiori → Postgres sync job** before U5 can compose digests that include iPhone captures. It is folded into U5 ("the daily cron polls Shiori for items captured since the last digest"). Chrome-extension captures still go through `/api/capture` and land in Postgres directly — they don't depend on the sync.
 
-**Open work after:** **U4** (LLM assist — needs the Anthropic key) and **U13** (seed the corpus from your existing X bookmarks — John's stated priority; worth pulling forward from Phase D).
+**Open work after:** **U4** (LLM assist) and **U13** (seed the corpus from your existing X bookmarks — John's stated priority; worth pulling forward from Phase D). **Anthropic key now provisioned** (2026-05-24): `LLM_API_KEY` is set in all 3 Vercel envs (Production / Preview / Development) and pulled into `apps/api/.env.local`. U4 can start without further prep.
 
 **Implementation notes (resolved during U3, apply to later units):**
 - **The API is now LIVE in production: `https://rwl-api.vercel.app`** (stable alias; `/api/capture`, `/api/health`). This is the first deploy; U12 formalizes the custom domain (`rwl.johnintrater.com`) + deploy hooks.
@@ -503,6 +503,8 @@ The 14 units below are grouped into four phases. The launch sequence (per origin
 ---
 
 - U4. **LLM "why" assist + R/W/L auto-classification + consume-time estimate**
+
+**▶ Resume here (handoff 2026-05-24, take 3):** prep is done — `LLM_API_KEY` (Anthropic) is set in all 3 Vercel envs + `apps/api/.env.local`. The `captures` table already has the columns U4 writes (`note`, `rwl_tag`, `consume_minutes`, `llm_status` — see `migrations/0001_initial.sql`), so no migration is needed. Next session should start by reading the U4 Files / Approach / Test scenarios below and the U2 capture pipeline (`apps/api/api/capture.ts`, `apps/api/src/lib/capture.ts`) — the enrichment hook fires after `handleCapture` persists the row, async via Vercel `waitUntil`.
 
 **Goal:** When a capture lacks a user-supplied note, an LLM job drafts one from the URL's metadata. The same job auto-classifies R/W/L from URL type and computes a consume-time estimate.
 
