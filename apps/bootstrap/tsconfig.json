@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // We import @rwl/api source directly (handleCapture etc.), which transitively
+    // pulls in its fetch/Request/Response-using libs. Those resolve to their
+    // canonical home in the DOM lib — without it, tsc flags them even though
+    // @types/node provides the runtime. Mirrors apps/api/tsconfig.json.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src", "test"]
+}
