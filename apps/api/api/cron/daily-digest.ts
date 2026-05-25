@@ -6,6 +6,7 @@
 // appears with non-empty body_md and status='draft'.
 
 import { composeDailyDigest } from "../../src/lib/digest.js";
+import { postApprovalDM } from "../../src/lib/approval.js";
 
 export async function GET(req: Request): Promise<Response> {
   // Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` when CRON_SECRET is
@@ -17,6 +18,11 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const outcome = await composeDailyDigest();
+    // A freshly composed draft gets the approval DM (draft → pending). Other
+    // outcomes (skipped / exists / failed) have nothing new to notify.
+    if (outcome.status === "composed") {
+      await postApprovalDM(outcome.digestId);
+    }
     return Response.json(outcome);
   } catch (e) {
     console.error("daily-digest cron failed:", e);
