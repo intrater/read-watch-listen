@@ -161,4 +161,39 @@ describe("shiori client (injected fetch)", () => {
     const fetchImpl = (async () => okResponse({})) as typeof fetch;
     await expect(createShioriClient({ fetchImpl }).createLink({ url: "https://example.com" })).rejects.toBeInstanceOf(ShioriError);
   });
+
+  it("listLinks sends the since param with bearer auth and normalizes rows", async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      captured = { url: String(url), init: init! };
+      return okResponse([
+        { id: "lnk_1", url: "https://a.test/1", title: "One", created_at: "2026-05-01T00:00:00Z" },
+        { linkId: "lnk_2", url: "https://a.test/2" }, // linkId alias, missing title/date
+        { url: "https://a.test/3" }, // no id → dropped (can't join)
+      ]);
+    }) as typeof fetch;
+
+    const links = await createShioriClient({ token: "shk_test", fetchImpl }).listLinks({ since: "2026-05-01T00:00:00Z", limit: 50 });
+
+    expect(captured?.url).toBe("https://www.shiori.sh/api/links?since=2026-05-01T00%3A00%3A00Z&limit=50");
+    expect((captured?.init.headers as Record<string, string>).authorization).toBe("Bearer shk_test");
+    expect(links).toEqual([
+      { id: "lnk_1", url: "https://a.test/1", title: "One", createdAt: "2026-05-01T00:00:00Z" },
+      { id: "lnk_2", url: "https://a.test/2", title: null, createdAt: null },
+    ]);
+  });
+
+  it("listLinks reads the {links:[...]} envelope", async () => {
+    const fetchImpl = (async () => okResponse({ links: [{ id: "x", url: "https://a.test/x" }] })) as typeof fetch;
+    const links = await createShioriClient({ token: "shk_test", fetchImpl }).listLinks();
+    expect(links).toHaveLength(1);
+    expect(links[0]!.id).toBe("x");
+  });
+
+  it("listLinks throws a retryable ShioriError on a 5xx", async () => {
+    const fetchImpl = (async () => okResponse({ error: "boom" }, 503)) as typeof fetch;
+    await expect(
+      createShioriClient({ token: "shk_test", fetchImpl }).listLinks(),
+    ).rejects.toMatchObject({ status: 503, retryable: true });
+  });
 });

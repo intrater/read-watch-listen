@@ -13,7 +13,10 @@ export type ShioriStatus = "pending" | "synced" | "failed";
 /** Lifecycle of the async LLM enrichment (the "why" note draft). */
 export type LlmStatus = "pending" | "done" | "failed";
 
-export type CaptureSource = "ios-shortcut" | "chrome-ext" | "bootstrap";
+// Client-facing capture sources (accepted by validateCaptureInput) plus the
+// internal "shiori-sync" source used by the daily cron when it pulls
+// iOS-via-Shiori captures into the Postgres spine (U5).
+export type CaptureSource = "ios-shortcut" | "chrome-ext" | "bootstrap" | "shiori-sync";
 
 export type DigestKind = "daily" | "weekend";
 

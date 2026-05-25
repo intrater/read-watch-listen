@@ -18,7 +18,8 @@ function stubShiori(impl?: ShioriClient["createLink"]) {
   const createLink = vi.fn(
     impl ?? (async () => ({ linkId: `lnk_${Math.random().toString(36).slice(2)}`, duplicate: false })),
   );
-  return { client: { createLink } as ShioriClient, createLink };
+  const listLinks = vi.fn(async () => []);
+  return { client: { createLink, listLinks } as ShioriClient, createLink };
 }
 
 describeDb("capture integration (requires DATABASE_URL)", () => {

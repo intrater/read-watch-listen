@@ -17,26 +17,19 @@
 // Injectable for tests: pass `createMessage` to avoid constructing the real SDK
 // client or hitting the network. Mirrors lib/shiori.ts's fetchImpl seam.
 
-import Anthropic from "@anthropic-ai/sdk";
 import type { RwlMedium } from "../types.js";
 import { WHY_ASSIST_SYSTEM, buildWhyAssistUser } from "../prompts/why-assist.js";
 import { CLASSIFY_SYSTEM, buildClassifyUser } from "../prompts/classify.js";
+import {
+  DEFAULT_MODEL,
+  LlmError,
+  defaultCreateMessage,
+  firstText,
+  type MessageCreateFn,
+} from "./anthropic.js";
 
-const DEFAULT_MODEL = "claude-haiku-4-5";
-
-/** Failure from the LLM. `status` is unset for non-HTTP errors. */
-export class LlmError extends Error {
-  readonly status?: number;
-  constructor(message: string, status?: number) {
-    super(message);
-    this.name = "LlmError";
-    this.status = status;
-  }
-  /** Transient = worth retrying (network error, 429, or 5xx). */
-  get retryable(): boolean {
-    return this.status === undefined || this.status === 429 || this.status >= 500;
-  }
-}
+// Re-exported so existing importers (and tests) keep using llm.ts as the entry point.
+export { LlmError };
 
 export interface PageFacts {
   url: string;
@@ -50,20 +43,6 @@ export interface LlmClient {
   /** Resolve R/W/L medium for an ambiguous URL. Throws LlmError on failure. */
   classifyMedium(facts: PageFacts): Promise<RwlMedium>;
 }
-
-/** The exact request shape we send. Kept local so SDK type drift on
- *  `output_config` (structured outputs) doesn't break the build. */
-interface LlmMessageRequest {
-  model: string;
-  max_tokens: number;
-  system: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
-  messages: Array<{ role: "user"; content: string }>;
-  output_config?: { format: { type: "json_schema"; schema: Record<string, unknown> } };
-}
-
-type MessageCreateFn = (
-  body: LlmMessageRequest,
-) => Promise<{ content: Array<{ type: string; text?: string }> }>;
 
 export interface LlmConfig {
   /** Defaults to process.env.LLM_API_KEY at call time. */
@@ -81,34 +60,6 @@ const MEDIUM_SCHEMA = {
   required: ["medium"],
   additionalProperties: false,
 } as const;
-
-function firstText(res: { content: Array<{ type: string; text?: string }> }): string {
-  const block = res.content.find((b) => b.type === "text" && typeof b.text === "string");
-  return block?.text ?? "";
-}
-
-/** Default message sender: lazily constructs the SDK client, validates the key,
- *  and normalizes errors to LlmError with a retryable status. */
-function defaultCreateMessage(apiKeyArg?: string): MessageCreateFn {
-  let client: Anthropic | null = null;
-  return async (body) => {
-    const apiKey = apiKeyArg ?? process.env.LLM_API_KEY;
-    if (!apiKey) throw new LlmError("LLM_API_KEY is not set");
-    if (!client) client = new Anthropic({ apiKey });
-    try {
-      // Cast at the single SDK boundary: our LlmMessageRequest carries
-      // `output_config` (structured outputs), which not every SDK version types
-      // on the non-beta create params. The field is still sent on the wire.
-      const res = await client.messages.create(
-        body as unknown as Anthropic.MessageCreateParamsNonStreaming,
-      );
-      return res as unknown as { content: Array<{ type: string; text?: string }> };
-    } catch (e) {
-      const status = (e as { status?: number }).status;
-      throw new LlmError(`Anthropic request failed: ${(e as Error).message}`, status);
-    }
-  };
-}
 
 export function createLlmClient(config: LlmConfig = {}): LlmClient {
   const model = config.model ?? process.env.LLM_MODEL ?? DEFAULT_MODEL;

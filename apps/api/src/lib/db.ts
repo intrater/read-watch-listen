@@ -23,6 +23,31 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   return getPool().query<T>(text, params as unknown[] | undefined);
 }
 
+/** Query function scoped to a single transaction connection. */
+export type TxQuery = <T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params?: unknown[],
+) => Promise<QueryResult<T>>;
+
+/**
+ * Run `fn` inside a BEGIN/COMMIT, rolling back on any throw. All statements use
+ * one checked-out connection so they're atomic (e.g. a digest + its items).
+ */
+export async function withTransaction<T>(fn: (q: TxQuery) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn((text, params) => client.query(text, params as unknown[] | undefined));
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();
