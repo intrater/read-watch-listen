@@ -1,10 +1,13 @@
 ---
 title: "feat: Build RWL — John's curated AI publication (greenfield)"
 type: feat
-status: active
+status: superseded
+superseded_by: docs/plans/2026-05-25-001-feat-rwl-site-first-resequence-plan.md
 date: 2026-05-24
 origin: docs/brainstorms/2026-05-24-rwl-requirements.md
 ---
+
+> **⚠️ Sequencing superseded (2026-05-25)** by [2026-05-25-001-feat-rwl-site-first-resequence-plan.md](2026-05-25-001-feat-rwl-site-first-resequence-plan.md), which re-orders this work site-first. **This document remains the reference for detailed unit specs (U1–U14)** — the new plan points back here for unit internals. Use the new plan for sequencing + current status.
 
 # feat: Build RWL — John's curated AI publication (greenfield)
 
